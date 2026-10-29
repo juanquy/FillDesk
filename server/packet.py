@@ -620,7 +620,8 @@ def draft_cover_letter(profile: dict, job: dict, settings: dict | None = None) -
         text = cover_letter_with_rules(profile, job, keywords)
         method = "rules"
         note = note or "Written from your saved profile with no model configured — read it and make it yours."
-    scrubbed = sensitive.redact_compliance_claims(text)
+    own = "\n".join(filter(None, [profile.get("master_resume_markdown", ""), profile.get("summary", "")]))
+    scrubbed = sensitive.redact_compliance_claims(text, inherited=own)
     text = scrubbed["text"]
     if scrubbed["redactions"]:
         kinds = ", ".join(sorted({r["category"].replace("_", " ") for r in scrubbed["redactions"]}))
@@ -675,9 +676,18 @@ def build_packet(job_id: str, extra_questions: list[str] | None = None, provider
     # Every drafted field is scrubbed before a human ever sees it; the marker left
     # behind is the one the approval gate and the autofiller both refuse.
     redactions: list[dict] = []
+    inherited: list[dict] = []
+    own_words = "\n".join(filter(None, [
+        profile.get("master_resume_markdown", ""), profile.get("summary", ""),
+        " ".join(str(b) for e in profile.get("experience", []) if isinstance(e, dict)
+                 for b in (e.get("bullets") or [])),
+        " ".join(str(b.get("text", "")) for b in profile.get("boilerplate", []) if isinstance(b, dict)),
+    ]))
 
     def scrub(text: str, where: str) -> str:
-        result = sensitive.redact_compliance_claims(text or "")
+        result = sensitive.redact_compliance_claims(text or "", inherited=own_words)
+        for item in result.get("inherited", []):
+            inherited.append({**item, "where": where})
         for item in result["redactions"]:
             redactions.append({**item, "where": where})
         return result["text"]
@@ -700,6 +710,15 @@ def build_packet(job_id: str, extra_questions: list[str] | None = None, provider
             f"Removed {len(redactions)} compliance statement(s) the drafter invented ({kinds}). "
             "They are yours to state, or to leave out — read the marked spots before approving."
         )
+
+    # Your own documents may state a legal status. That is your call, so it is not
+    # removed — it is surfaced, because a statement that is true in one country is
+    # irrelevant in another and it should be a decision, not an inheritance.
+    status_flags: list[dict] = []
+    for where, text in (("tailored resume", built.get("resume_markdown", "")),
+                        ("cover letter", built.get("cover_letter", ""))):
+        for item in sensitive.status_mentions(text):
+            status_flags.append({**item, "where": where})
 
     md = built["resume_markdown"]
     flags = resume_export.needs_input_flags(md + "\n" + built["cover_letter"] + "\n" + "\n".join(a["answer"] for a in built["answers"]))
@@ -725,6 +744,7 @@ def build_packet(job_id: str, extra_questions: list[str] | None = None, provider
         "keywords": built.get("keywords", [])[:30],
         "blocked_questions": [a["question"] for a in blocked],
         "compliance_redactions": redactions[:20],
+        "status_mentions": status_flags[:12],
         "needs_input_flags": flags[:40],
         "warnings": warnings,
         "llm": {"provider": built.get("method", "rules"), "model": (built.get("llm") or {}).get("model", ""), "requested": cfg["provider"]},

@@ -414,9 +414,23 @@
     return counts;
   }
 
+  // For the questions FillDesk will not touch, say what the honest options are, so the
+  // reviewer can answer in one click instead of googling the legal vocabulary.
+  const BLOCK_HINTS = {
+    work_authorization: 'you choose: US citizen · permanent resident · visa holder (H-1B, TN, OPT…) · work permit (EAD) · prefer not to say',
+    protected_class: 'voluntary — blank is a fine answer',
+    disability: 'only you can request an accommodation',
+    veteran: 'voluntary self-identification',
+    legal_declaration: 'attestations are signed by you',
+    age: 'yours alone',
+  };
+
   function lineFor(item) {
     const { desc, decision } = item;
-    if (decision.action === 'block') return { kind: 'bad', text: `will not answer — ${decision.category}: ${clipLabel(desc)}` };
+    if (decision.action === 'block') {
+      const hint = BLOCK_HINTS[decision.category];
+      return { kind: 'bad', text: `will not answer — ${decision.category}: ${clipLabel(desc)}${hint ? `\n        ↳ ${hint}` : ''}` };
+    }
     if (decision.action === 'upload') return { kind: 'ok', text: `attach ${decision.value === 'cover_letter' ? 'cover letter' : 'resume'}` };
     if (decision.action === 'fill') return { kind: decision.review ? 'warn' : 'ok', text: `${clipLabel(desc)} → ${clip(decision.value, 46)}${decision.review ? ' (verify)' : ''}` };
     return null;
@@ -773,7 +787,7 @@
       .legend{display:flex;gap:9px;padding:0 11px 8px;color:#93a0b5;font-size:10.5px}
       .legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px}
       .log{max-height:190px;overflow:auto;padding:0 11px 10px;font-size:11.5px;line-height:1.45}
-      .log div{padding:2px 0;border-bottom:1px solid #1c232e}
+      .log div{padding:2px 0;border-bottom:1px solid #1c232e;white-space:pre-line}
       .log .ok{color:#8fe0b6}.log .warn{color:#f0c48a}.log .bad{color:#f3a1a1}
       .sum{padding:9px 11px;background:#171d26;border-top:1px solid #2a3442;color:#cdd6e3}
       .sum b{color:#fff}

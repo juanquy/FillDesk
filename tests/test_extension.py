@@ -297,6 +297,35 @@ class DatePickers(unittest.TestCase):
         self.has(self.content, "Ask per field ✓", "the button should show which state it is in")
 
 
+class RefusedQuestionGuidance(unittest.TestCase):
+    """Answering a work-authorization question should cost one click, not a search for
+    the legal vocabulary. FillDesk still never answers it for you."""
+
+    def test_the_panel_names_the_honest_options(self):
+        content = (EXT / "content.js").read_text()
+        self.assertIn("BLOCK_HINTS", content, "refused fields carry no guidance")
+        for phrase in ("US citizen", "permanent resident", "H-1B", "EAD", "prefer not to say"):
+            self.assertIn(phrase, content, f"the work-authorization hint should name {phrase}")
+        self.assertIn("voluntary — blank is a fine answer", content,
+                      "self-identification should say that skipping is legitimate")
+        self.assertIn("white-space:pre-line", content, "the hint needs to wrap onto its own line")
+
+    def test_a_status_inherited_from_the_resume_is_surfaced_in_review(self):
+        packet = (ROOT / "server" / "packet.py").read_text()
+        self.assertIn('sensitive.status_mentions(', packet, "packets do not look for status lines")
+        self.assertIn('"status_mentions":', packet, "the finding is not recorded on the packet")
+        body = packet[packet.index("def build_packet"):packet.index("def build_autofill_snapshot")]
+        self.assertTrue("status_mentions" in body and "redact_compliance_claims" in body,
+                        "status mentions must be surfaced separately from invented claims")
+        self.assertIn('id="pd-status"', (WEB / "index.html").read_text())
+        dash = (WEB / "app.js").read_text()
+        self.assertIn("function renderStatusMentions", dash, "the dashboard never shows it")
+        self.assertIn("Confirm you want it on this application", dash,
+                      "the reminder must say what the decision is")
+        self.assertIn("the extension will never answer those for you", dash.lower(),
+                      "the amber block must repeat the hard refusal")
+
+
 class DocsImages(unittest.TestCase):
     """Docs that link to a missing image are worse than docs with no images."""
 

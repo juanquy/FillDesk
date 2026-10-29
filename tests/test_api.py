@@ -725,6 +725,69 @@ class RulesTests(unittest.TestCase):
         self.assertIsNotNone(sensitive.blocked_reason("Are you legally authorized to work in the US?"))
 
 
+class StatusMentionsAreFlagged(unittest.TestCase):
+    """The user's own legal-status line: surfaced per application, never deleted."""
+
+    def test_a_status_in_the_master_resume_is_surfaced_not_stripped(self):
+        _, before = call("GET", "/api/profile")
+        resume = ("# Dana Whitfield\n\n📍 Roslindale, MA · 🇺🇸 US Citizen · 15+ years\n\n## Summary\n"
+                  "Systems engineer running Microsoft 365 and Entra ID estates.\n\n## Experience\n"
+                  "- Ran E-Verify onboarding for 300 new hires.\n- Led an Intune rollout for 2,400 users.\n\n"
+                  "## Skills\n- Entra ID\n\n## Education\n- Northgate Technical College\n")
+        code, profile = call("PUT", "/api/profile", {"master_resume_markdown": resume})
+        self.assertEqual(code, 200, profile)
+        code, job = call("POST", "/api/jobs", {
+            "url": "https://jobs.example.test/status-flag", "title": "Systems Engineer",
+            "company": "Example Labs",
+            "description": ("Example Labs needs a Systems Engineer for a Microsoft 365 and Entra ID estate. "
+                            "Why Example Labs?") * 3,
+        })
+        self.assertEqual(code, 200, job)
+        try:
+            code, with_status = call("POST", "/api/packets", {"job_id": job["id"]})
+            self.assertEqual(code, 200, with_status)
+
+            self.assertTrue(with_status["status_mentions"], "the US Citizen line should be surfaced")
+            self.assertIn("tailored resume", {r["where"] for r in with_status["status_mentions"]})
+            self.assertIn("US Citizen", with_status["resume"]["markdown"],
+                          "your words are yours: surfaced, never deleted")
+            self.assertIn("# Dana Whitfield", with_status["resume"]["markdown"],
+                          "flagging one line must not swallow the block around it")
+            self.assertTrue(all("E-Verify" not in r["text"] for r in with_status["status_mentions"]),
+                            "running an employer's E-Verify queue is a duty, not a statement about you")
+
+            # Differential: the same resume without the status line must leave exactly the
+            # same open items. An amber reminder that blocks approval is a dark pattern.
+            call("PUT", "/api/profile", {"master_resume_markdown": resume.replace("🇺🇸 US Citizen · ", "")})
+            code, plain = call("POST", "/api/packets", {"job_id": job["id"]})
+            self.assertEqual(code, 200, plain)
+            self.assertFalse(plain["status_mentions"], "the flag should disappear with the line")
+            self.assertNotIn("US Citizen", plain["resume"]["markdown"])
+            self.assertEqual(len(with_status["needs_input_flags"]), len(plain["needs_input_flags"]),
+                             "a status mention must not add an approval blocker")
+            self.assertEqual(with_status["compliance_redactions"], plain["compliance_redactions"])
+
+            code, res = call("POST", f"/api/packets/{with_status['id']}/approve",
+                             {"force": True} if with_status["needs_input_flags"] else {})
+            self.assertEqual(code, 200, res)
+            self.assertTrue(res["approved"])
+            call("DELETE", f"/api/packets/{plain['id']}")
+            call("DELETE", f"/api/packets/{with_status['id']}")
+        finally:
+            call("PUT", "/api/profile", {"master_resume_markdown": before.get("master_resume_markdown", "")})
+            call("DELETE", f"/api/jobs/{job['id']}")
+
+    def test_unit_the_detector_knows_duty_from_declaration(self):
+        from server import sensitive
+        self.assertTrue(sensitive.status_mentions("🇺🇸 US Citizen 15+ years"))
+        self.assertTrue(sensitive.status_mentions("Authorized to work without sponsorship"))
+        self.assertTrue(sensitive.status_mentions("Lawful permanent resident; EAD on file"))
+        self.assertFalse(sensitive.status_mentions("Ran E-Verify onboarding for 300 new hires"))
+        self.assertFalse(sensitive.status_mentions("Administered I-9 verification for the NOC team"))
+        self.assertFalse(sensitive.status_mentions("Led the Entra ID rollout for 2,400 users"))
+        self.assertFalse(sensitive.status_mentions("Partnered with a veteran-owned supplier"))
+
+
 class GeneratedProseIsScrubbed(unittest.TestCase):
     """A model that *infers* a compliance fact must not be able to write it.
 

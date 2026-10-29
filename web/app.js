@@ -451,6 +451,7 @@ async function openPacket(id) {
   $('#pd-warnings').innerHTML = (CURRENT.warnings || []).length
     ? `<div class="notice">${CURRENT.warnings.map(esc).join('<br>')}</div>` : '';
   renderRedactions();
+  renderStatusMentions();
   $('#pd-resume').value = CURRENT.resume.markdown || '';
   $('#pd-cover').value = CURRENT.cover_letter.text || '';
   $('#pd-words').textContent = (CURRENT.cover_letter.words || 0) + ' words';
@@ -478,6 +479,22 @@ function renderRedactions() {
     <ul style="margin:6px 0 0 18px">${red.map((r) => `<li><b>${esc(String(r.category).replace(/_/g, ' '))}</b> in ${esc(r.where)}:
       &ldquo;${esc(r.sentence)}&rdquo; — ${esc(r.why)}</li>`).join('')}</ul>
     Statements like these are yours alone. Say them yourself, in your own words, only if they are true.</div>`;
+}
+
+// A legal status that came from your own master resume. Not removed, not blocked:
+// just a reminder to decide, per application, whether you want it on the page.
+function renderStatusMentions() {
+  const host = $('#pd-status');
+  if (!host) return;
+  const rows = (CURRENT && CURRENT.status_mentions) || [];
+  if (!rows.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="notice" style="border-left:3px solid #e6a23c">
+    <strong>This packet states a legal status. Confirm you want it on this application.</strong>
+    <ul style="margin:6px 0 0 18px">${rows.map((r) => `<li><b>${esc(r.where)}</b>: &ldquo;${esc(r.text)}&rdquo;</li>`).join('')}</ul>
+    It came from your own master resume, so FillDesk leaves it alone. Employers do ask
+    (authorized to work? do you require sponsorship for a visa such as H-1B?) — but they ask
+    <em>you</em>, and the extension will never answer those for you. If a role is outside the
+    US or the requirement is irrelevant, remove the line here.</div>`;
 }
 
 function renderPreview() { $('#pd-preview').innerHTML = mdToHtml($('#pd-resume').value); }

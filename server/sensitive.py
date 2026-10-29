@@ -179,7 +179,10 @@ _PROSE_CLAIMS: list[tuple[str, str, str, bool]] = [
 ]
 
 _FIRST_PERSON = re.compile(r"\b(i|my|me|myself|as a candidate|as your candidate)\b", re.I)
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?:])[\s\n]+")
+# Split on terminal punctuation and on paragraph or markdown-line breaks, but NOT on a
+# single newline: a wrapped sentence must stay one sentence or a claim split across the
+# wrap would slip through.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])[\s\n]+|\n{2,}|\n(?=\s*(?:[-#*\u2022]|\d+[.)]))")
 _WHY = {c: why for c, _p, why, _a in _PROSE_CLAIMS}
 _PROSE_COMPILED = [(c, re.compile(p, re.I), why, tier_a) for c, p, why, tier_a in _PROSE_CLAIMS]
 
@@ -199,24 +202,81 @@ def compliance_claims(text: str) -> list[dict]:
         for category, pattern, why, tier_a in _PROSE_COMPILED:
             if not tier_a and not first_person:
                 continue
-            if pattern.search(probe):
-                out.append({"category": category, "sentence": sentence, "why": why})
+            hit = pattern.search(probe)
+            if hit:
+                out.append({"category": category, "sentence": sentence, "why": why,
+                            "matched": normalize(hit.group(0))})
                 break
     return out
 
 
-def redact_compliance_claims(text: str) -> dict:
+# ---------------------------------------------------------------- status mentions
+#
+# These are the questions every US application asks: "Are you legally authorized to
+# work?", "Do you now or in the future require sponsorship (H-1B, TN, O-1)?", and the
+# dropdown of statuses — US citizen, lawful permanent resident, non-immigrant visa
+# holder, EAD (work permit) holder. FillDesk refuses to answer them because the I-9
+# attestation is signed under penalty of perjury by the employee. But a document the
+# user wrote may legitimately state the status, and that is their call — so it is
+# surfaced for confirmation, never stripped.
+_STATUS_MENTIONS = re.compile(
+    r"(\bu\.?s\.?\b|united states)?\s?(citizen(ship)?|lawful permanent resident|permanent resident card?|"
+    r"green card|(employment )?authorization (document|to work)|work permit|\bead\b|"
+    r"sponsorship|sponsor me|require sponsorship|without sponsorship|"
+    r"\b(h-?1b|tn|o-?1|opt|stem opt|cpt|l-?1|f-?1|j-?1|eb-?\d|i-?485|i-?9|e-?verify)\b|"
+    r"asylee|refugee|non-?immigrant visa|naturalized|born in the united states)",
+    re.I,
+)
+
+
+# Running a company's E-Verify queue is a job duty, not a statement about you. Only
+# the process-and-system words get this exemption; "I am a US Citizen" never does.
+_STATUS_DUTY = re.compile(
+    r"\b(configur\w*|administ\w*|manag\w*|ran|run|implement\w*|support\w*|audit\w*|"
+    r"onboard\w*|train\w*|process\w*|integrat\w*|troubleshoot\w*)\b.*?"
+    r"\b(e-?verify|i-?9|employment eligibility|work permit|green card|visa)\b",
+    re.I | re.S,
+)
+
+
+def status_mentions(text: str) -> list[dict]:
+    """Lines in a document that state an immigration or work-authorization status."""
+    out: list[dict] = []
+    for line in re.split(r"\n|(?<=[.!?])\s+", text or ""):
+        probe = normalize(line)
+        if not probe or _SAFE_CONTEXT.search(probe) or _STATUS_DUTY.search(probe):
+            continue
+        if _STATUS_MENTIONS.search(probe):
+            out.append({"text": line.strip()[:200], "why": "a legal status stated in your document"})
+    return out
+
+
+def redact_compliance_claims(text: str, inherited: str = "") -> dict:
     """Swap each compliance assertion for a [NEEDS INPUT] marker.
 
     The marker is the same token the rest of the product already refuses to autofill
     and refuses to approve without force, so a drafted compliance claim cannot reach a
     form on any path -- it has to be read and resolved by a person first.
+
+    `inherited` is the person's own source text (master resume, summary, saved
+    answers). A claim whose wording already appears there is *their* statement travelling
+    through the pipeline, not a model's invention, so it is reported separately and left
+    in place: the rule is never invent, inherit knowingly. Deleting somebody's own true
+    sentence from their own resume would be its own kind of lie.
     """
+    source = normalize(inherited or "")
     claims = compliance_claims(text)
     if not claims:
-        return {"text": text, "redactions": []}
-    clean = text
+        return {"text": text, "redactions": [], "inherited": []}
+    invented, inherited_claims = [], []
     for c in claims:
+        if c.get("matched") and len(c["matched"]) > 6 and c["matched"] in source:
+            inherited_claims.append(c)
+        else:
+            invented.append(c)
+    clean = text
+    for c in invented:
         marker = f"[NEEDS INPUT] {c['category'].replace('_', ' ')}: {c['why']}."
         clean = clean.replace(c["sentence"], marker)
-    return {"text": clean.strip(), "redactions": claims}
+    return {"text": clean.strip() if invented else text, "redactions": invented,
+            "inherited": inherited_claims}
