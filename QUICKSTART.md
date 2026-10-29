@@ -107,6 +107,12 @@ LinkedIn through a tool is how accounts get restricted).
 
 ## 5. Verify it on the sample form before trusting it
 
+![The sample application the extension fills against](docs/img/sample-form.png)
+
+*This page is local (`/preview.html`), the data on it is fake, and its Submit button is
+inert — it is the safe place to learn what the panel does before pointing it at a real
+employer.*
+
 Dashboard → Settings → *Open the sample application form* (or open
 `http://127.0.0.1:8756/preview.html`). Press **Preview**, then **Fill application**.
 

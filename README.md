@@ -24,12 +24,24 @@ with a human in the loop at the one step that matters.
                              your chosen model provider
 ```
 
+![The FillDesk panel reviewing an application: 8 fields to fill, 2 documents to attach, 8 it refuses](docs/img/refusals.png)
+
+*The extension panel, mid-review, on the sample form that ships with the app. Green =
+will fill, amber = verify, red = **you must answer, and this tool will not touch it**.
+The persona is the invented demo one and nothing is sent anywhere.*
+
 ---
 
 ## What it refuses to do
 
 These are hard-coded, tested from both sides (Python and JavaScript), and **not
 user-configurable**:
+
+![Sample application form with the FillDesk panel beside it](docs/img/review-panel.png)
+
+*The panel's count line reads `8 to fill · 2 uploads · 8 you answer`. On a real portal
+those eight red rows are the whole argument for review-first: they are the questions
+where an autofiller destroys your application, or worse, your credibility.*
 
 | Never | Why |
 |---|---|

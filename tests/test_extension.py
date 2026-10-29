@@ -16,6 +16,11 @@ import sys
 import unittest
 from pathlib import Path
 
+try:
+    from PIL import Image
+except ImportError:  # images are checked only when Pillow is present
+    Image = None
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -150,6 +155,29 @@ class DashboardTests(unittest.TestCase):
         ids_written_by_js = set(re.findall(r'id="([\w-]+)"', js))
         missing = sorted(ids_in_js - ids_in_html - ids_written_by_js)
         self.assertFalse(missing, f"app.js binds ids that the dashboard does not define: {missing}")
+
+
+class DocsImages(unittest.TestCase):
+    """Docs that link to a missing image are worse than docs with no images."""
+
+    def test_referenced_images_exist(self):
+        missing = []
+        for doc in ("README.md", "QUICKSTART.md"):
+            text = (ROOT / doc).read_text()
+            for rel in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", text):
+                if rel.startswith(("http://", "https://", "data:")):
+                    continue
+                if not (ROOT / doc).resolve().parent.joinpath(rel).resolve().exists():
+                    missing.append(f"{doc}: {rel}")
+        self.assertFalse(missing, "broken image links: " + ", ".join(missing))
+
+    def test_no_full_screenshots_in_the_repo(self):
+        """A full desktop screenshot carries tabs, bookmarks and a taskbar. Crop it."""
+        for path in (ROOT / "docs" / "img").glob("*"):
+            self.assertLess(path.stat().st_size, 400 * 1024,
+                            f"{path.name} is large enough to be an uncropped desktop shot")
+            self.assertLess(max(Image.open(path).size) if path.suffix == ".png" else 0, 3000,
+                            f"{path.name} looks like an uncropped screenshot")
 
 
 class HumanInTheLoopTests(unittest.TestCase):
