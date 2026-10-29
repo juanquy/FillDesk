@@ -326,6 +326,31 @@ class RefusedQuestionGuidance(unittest.TestCase):
                       "the amber block must repeat the hard refusal")
 
 
+class BuildStamp(unittest.TestCase):
+    """A stale content script and a fixed one look identical, and Chrome's error list
+    keeps old entries. The build number has to be visible where the user looks."""
+
+    def test_extension_and_server_agree_on_the_version(self):
+        manifest = json.loads((EXT / "manifest.json").read_text())
+        self.assertEqual(manifest["version"], config.VERSION,
+                         "the panel would report a version the server disagrees with")
+
+    def test_the_version_is_visible_in_the_panel_and_the_popup(self):
+        content = (EXT / "content.js").read_text()
+        popup = (EXT / "popup.js").read_text()
+        self.assertIn('id="fd-ver"', content, "the panel header should carry the build")
+        self.assertIn("getManifest()", content, "nothing reads the manifest version")
+        self.assertIn("content script v", content, "the console should say which build loaded")
+        self.assertIn("calendar", content, "boot logging should report whether the calendar loaded")
+        self.assertIn("matcher", content, "boot logging should report whether the matcher loaded")
+        self.assertIn("${text} · v${BUILD}", popup, "the popup status should carry the build")
+
+    def test_content_scripts_are_listed_in_load_order(self):
+        js = json.loads((EXT / "manifest.json").read_text())["content_scripts"][0]["js"]
+        self.assertEqual(js[:2], ["matcher.js", "datepicker.js"],
+                         "content.js expects both helpers to exist before it runs")
+
+
 class StrictModeSafety(unittest.TestCase):
     """Every browser file runs under 'use strict', so assigning to a name that was never
     declared is a ReferenceError that kills the whole action — and nothing in a headless

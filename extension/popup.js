@@ -16,8 +16,12 @@ function bg(msg) {
 
 let cfg = { server: DEFAULT_SERVER, token: '' };
 
+const BUILD = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
+
 function setStatus(text, on) {
-  $('#status').textContent = text;
+  // The version is printed everywhere the user looks, because "did my extension
+  // actually reload?" must never again be answered by guessing from a stack line.
+  $('#status').textContent = `${text} · v${BUILD}`;
   $('#dot').classList.toggle('on', !!on);
 }
 

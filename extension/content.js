@@ -778,6 +778,7 @@
       .dot{width:8px;height:8px;border-radius:50%;background:#ef5f5f;flex:none}
       .dot.on{background:#2fbf7a}
       .ttl{font-weight:700;letter-spacing:.2px}
+      .ver{color:#63708a;font-size:10px;font-weight:600;margin-right:2px}
       .sub{color:#93a0b5;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .mini{background:#202735;border:1px solid #2a3442;color:#cdd6e3;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer}
       .btns{display:flex;flex-wrap:wrap;gap:6px;padding:10px 11px}
@@ -824,6 +825,7 @@
       <div class="box">
         <div class="hd">
           <span class="dot" id="fd-dot"></span><span class="ttl">FillDesk</span>
+          <span class="ver" id="fd-ver"></span>
           <span class="sub" id="fd-sub">connecting…</span>
           <button class="mini" id="fd-min" title="collapse">–</button>
         </div>
@@ -881,6 +883,10 @@
 
     function mount() {
       if (mounted) return;
+      try {
+        const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
+        root.querySelector('#fd-ver').textContent = 'v' + build;
+      } catch (e) { /* a page that blocks chrome APIs still gets a panel */ }
       if (!document.body) return setTimeout(mount, 200);
       mounted = true;
       document.body.appendChild(host);
@@ -1008,6 +1014,11 @@
   }
 
   async function boot() {
+    try {
+      const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
+      console.info(`[FillDesk] content script v${build} on ${location.host}`
+        + ` (matcher ${window.FILLDESK_MATCHER ? 'ok' : 'MISSING'}, calendar ${window.FILLDESK_CAL ? 'ok' : 'MISSING'})`);
+    } catch (e) { /* logging must never break a page */ }
     await loadConfig();
     const APP_LIKE = looksLikeApplication();
     if (IS_TOP && APP_LIKE) ui.mount();
