@@ -1,0 +1,15 @@
+# your personal data: profile, jobs, packets, api token, events
+/data/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.DS_Store
+.directory
+reports/
+GH.txt
+
+# private notes: competitive research, not product documentation
+REVIEW-swooped.md

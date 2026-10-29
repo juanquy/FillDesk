@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "FillDesk — Job Application Filler",
+  "version": "0.1.0",
+  "description": "Build a tailored application packet on your own machine, then autofill job applications. Review-first: it never submits, and never answers compliance or protected-class questions.",
+  "permissions": ["storage", "scripting", "commands", "notifications"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "http://[::1]/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FillDesk — fill this application",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["matcher.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "commands": {
+    "fill-job": { "suggested_key": { "default": "Ctrl+Shift+F" }, "description": "Fill the application on this page" },
+    "save-job": { "suggested_key": { "default": "Ctrl+Shift+S" }, "description": "Save this job listing to FillDesk" }
+  }
+}

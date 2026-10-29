@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FillDesk self-test — Senior Product Manager application (sample form)</title>
+<style>
+  body { font: 15px/1.55 system-ui, sans-serif; background: #f6f7f9; color: #14181f; margin: 0; padding: 30px 18px 120px; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .banner { background: #12161d; color: #e8ecf3; border-radius: 10px; padding: 14px 16px; margin-bottom: 22px; font-size: 14px; }
+  .banner b { color: #8fe0b6; }
+  .card { background: #fff; border: 1px solid #dfe3ea; border-radius: 10px; padding: 20px 22px; margin-bottom: 18px; }
+  h1 { font-size: 21px; margin: 0 0 4px; } h2 { font-size: 15px; margin: 0 0 14px; }
+  .muted { color: #67707f; font-size: 13.5px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 16px 0 5px; }
+  input[type=text], input[type=email], input[type=tel], input[type=date], select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid #c9cfda; border-radius: 6px; font: inherit; background: #fff; }
+  textarea { min-height: 88px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .radios { display: flex; gap: 18px; margin-top: 4px; font-size: 14.5px; }
+  .radios label { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; margin: 0; }
+  .req { color: #c0392b; }
+  button { background: #0b74e3; color: #fff; border: 0; border-radius: 7px; padding: 11px 18px; font: inherit; font-weight: 600; }
+  .note { font-size: 12.5px; color: #67707f; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="banner">
+    <b>Sample form — nothing is sent anywhere.</b><br>
+    This page exists so you can watch FillDesk work before pointing it at a real application.
+    Open it in Chrome with the extension installed, then press <b>Preview</b> and then <b>Fill application</b>.
+    Green fields it filled, amber ones to verify, red ones it will not touch. The Submit button is inert.
+  </div>
+
+  <div class="card">
+    <h1>Senior Product Manager</h1>
+    <div class="muted">Linear · Remote (US) · Full-time · posted 3 days ago</div>
+  </div>
+
+  <form onsubmit="event.preventDefault(); alert('This sample form never submits anything — that is the point.');">
+    <div class="card">
+      <h2>Your details</h2>
+      <div class="grid">
+        <div><label>First name <span class="req">*</span></label><input type="text" name="first_name" autocomplete="given-name"></div>
+        <div><label>Last name <span class="req">*</span></label><input type="text" name="last_name" autocomplete="family-name"></div>
+        <div><label>Email address <span class="req">*</span></label><input type="email" name="email" autocomplete="email"></div>
+        <div><label>Phone number</label><input type="tel" name="phone" placeholder="+1 (555) 000-0000"></div>
+        <div><label>Where are you based?</label><input type="text" name="location" placeholder="City, State"></div>
+        <div><label>LinkedIn profile</label><input type="text" name="linkedin_url" placeholder="https://linkedin.com/in/…"></div>
+        <div><label>Preferred pronouns</label><input type="text" name="pronouns"></div>
+        <div><label>Earliest start date</label><input type="text" name="start_date" placeholder="mm/dd/yyyy"></div>
+      </div>
+      <label>Desired salary <span class="req">*</span></label>
+      <input type="text" name="salary_expectation" placeholder="$ per year">
+      <div class="note">FillDesk fills this from your profile and flags it amber — always re-check money.</div>
+    </div>
+
+    <div class="card">
+      <h2>Documents</h2>
+      <label>Resume / CV <span class="req">*</span></label>
+      <input type="file" name="resume" accept=".pdf,.doc,.docx">
+      <label>Cover letter</label>
+      <input type="file" name="cover_letter" accept=".pdf,.doc,.docx,.txt">
+      <label>Additional document (optional)</label>
+      <input type="file" name="other_document">
+      <div class="note">The upload fields are where most tools quietly fail. Watch whether these two take the approved files.</div>
+    </div>
+
+    <div class="card">
+      <h2>Experience</h2>
+      <div class="grid">
+        <div><label>Most recent company</label><input type="text" name="company"></div>
+        <div><label>Job title</label><input type="text" name="title"></div>
+        <div><label>Start date</label><input type="text" name="start_date_2" placeholder="mm/yyyy"></div>
+        <div><label>End date</label><input type="text" name="end_date" placeholder="mm/yyyy"></div>
+      </div>
+      <label>School / University</label><input type="text" name="school">
+      <label>Degree / Field of study</label><input type="text" name="degree">
+    </div>
+
+    <div class="card">
+      <h2>Questions</h2>
+      <label>Why do you want to work at Linear?</label>
+      <textarea name="q_why_company"></textarea>
+      <label>How do you approach prioritization?</label>
+      <textarea name="q_prioritization"></textarea>
+      <label>Describe your experience with Kubernetes and Terraform.</label>
+      <textarea name="q_k8s"></textarea>
+      <label>How did you hear about this position?</label>
+      <input type="text" name="how_heard">
+    </div>
+
+    <div class="card">
+      <h2>Before you apply <span class="muted">(FillDesk will refuse all of these)</span></h2>
+      <label>Are you legally authorized to work in the United States? <span class="req">*</span></label>
+      <div class="radios">
+        <label><input type="radio" name="work_auth" value="yes"> Yes</label>
+        <label><input type="radio" name="work_auth" value="no"> No</label>
+      </div>
+      <label>Will you now or in the future require sponsorship for employment visa status? <span class="req">*</span></label>
+      <div class="radios">
+        <label><input type="radio" name="sponsorship" value="yes"> Yes</label>
+        <label><input type="radio" name="sponsorship" value="no"> No</label>
+      </div>
+      <label>Self-identification: Gender <span class="muted">(voluntary)</span></label>
+      <select name="gender"><option value="">Please select</option><option>Female</option><option>Male</option><option>Non-binary</option><option>Prefer not to say</option></select>
+      <label>Veteran status <span class="muted">(voluntary)</span></label>
+      <select name="veteran"><option value="">Please select</option><option>I am not a veteran</option><option>I am a veteran</option><option>I am a protected veteran</option><option>Prefer not to say</option></select>
+      <label>Do you require a reasonable accommodation to complete the application process?</label>
+      <div class="radios">
+        <label><input type="radio" name="accommodation" value="yes"> Yes</label>
+        <label><input type="radio" name="accommodation" value="no"> No</label>
+      </div>
+      <label>Date of birth</label>
+      <input type="text" name="dob" placeholder="mm/dd/yyyy">
+      <label>I certify that the information provided is true and complete to the best of my knowledge.</label>
+      <div class="radios"><label><input type="checkbox" name="certify"> I agree</label></div>
+      <label>Signature</label>
+      <input type="text" name="signature">
+    </div>
+
+    <button type="submit">Submit application</button>
+    <div class="note">Inert on purpose. FillDesk never clicks this — on a real application, reading the whole page and pressing Submit is your job.</div>
+  </form>
+</div>
+</body>
+</html>

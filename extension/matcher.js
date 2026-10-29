@@ -1,0 +1,574 @@
+/*
+ * FillDesk field matcher.
+ *
+ * Deliberately pure: it takes plain objects and returns plain objects, so it can
+ * be unit tested in Node without a DOM. content.js walks the page, builds field
+ * descriptors, and hands them here for the decision.
+ *
+ * Order matters: compliance rules are evaluated FIRST so a protected-class or
+ * work-authorization field can never be claimed by a looser rule later on.
+ */
+(function (root) {
+  'use strict';
+
+  // ------------------------------------------------------------------ utils
+  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const key = (s) => norm(String(s == null ? '' : s).replace(/[^a-zA-Z0-9]+/g, ' '));
+  const clip = (s, n) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; };
+
+  function tokens(s) {
+    return norm(s).split(' ').filter((w) => w.length > 2);
+  }
+
+  function overlap(a, b) {
+    const A = new Set(tokens(a));
+    const B = tokens(b);
+    if (!A.size || !B.length) return 0;
+    let hit = 0;
+    for (const w of B) if (A.has(w) || w.startsWith(A) || [...A].some((x) => x.startsWith(w))) hit += 1;
+    return hit / Math.max(3, Math.min(A.size, B.length));
+  }
+
+  // ------------------------------------------------------------------ compliance
+  const BLOCKED = [
+    ['protected_class', /\b(race|ethnic|gender|sex(uality|ual orientation)?|religion|creed|faith|national origin|nationality|indigenous|aboriginal|minority|lgbtq|queer|self[- ]identif\w*|demographic|eeo|equal opportunity)\b/],
+    ['disability', /\b(disabilit\w+|accommodat\w+|ada\b|mobility|wheelchair|hearing (loss|impairment)|vision (loss|impairment)|mental health|ptsd)\b/],
+    ['veteran', /\b(veteran\w*|armed forces|military service|active duty|discharge(d)? type|protected veteran|userra)\b/],
+    ['work_authorization', /\b(work (authorization|authorized|authorised)|legally authorized|citizen|citizenship|permanent resident|green card|immigration status|visa|sponsor(ship)?|h-?1b|opt\b|stem opt|employment eligibility|i-?9\b|passport)\b/],
+    ['age', /\b(age|date of birth|dob\b|birth ?date|born on|year of birth|how old)\b|\b(are|were) you (?:over|under|at least|older than)?\s*1[6-9]\b|\b1[6-9]\s*(?:or older|or above|years of age|years old)\b|\bage requirement\b/],
+    ['criminal', /\b(arrest\w*|convict\w*|felon\w*|misdemeanor|misdemeanour|criminal (record|history|background)|incarcerat\w*|court[- ]ordered|dishonorable discharge)\b/],
+    ['legal_declaration', /\b(attest|affirm|hereby|under penalty|declaration|certif\w* (that|the)|sworn|notari\w+|electronic signature|e-signature|signature|initials?|i (certify|agree|consent|acknowledge)|terms (and )?(of )?(use|service)|opt[- ]?in|consent to|authorize (us|the company))\b/],
+    ['health', /\b(health (condition|history|insurance)\w*|medical (history|record|leave)\w*|fmla|workers[- ]?comp|drug (test|screen)|tobacco|smoking|pregnan\w+|family planning|childcare|familial status|marital status|marriage)\b/],
+    ['financial_and_credit', /\b(bank account|routing number|credit (check|report|score)|garnish\w*|social security number|ssn|national insurance number|nino|tax id|tin\b|passport number|driver license number|drivers license number)\b/],
+  ].map(([category, rx]) => ({ category, rx: new RegExp(rx.source, 'i') }));
+
+  // Rules that must be checked before identity (e.g. "expected salary" is not "salary history").
+  const REVIEW = [
+    ['salary', /\b(salar\w+|compensation|base pay|pay expectation|desired (rate|pay)|hourly rate|ctc)\b/],
+    ['relocation', /\b(relocat\w*|willing to (move|relocate)|travel (requirement|%|percent)|work ?(model|location|preference)|hybrid|onsite|on[- ]?site|remote)\b/],
+    ['start_date', /\b(start date|available (to start|from|date)|when (can|could) you start|earliest start|notice period)\b/],
+    ['clearance', /\b(clearance|background check|security (check|screening)|credit check|drug screen)\b/],
+    ['references', /\b(reference|referee|recommender)\b/],
+    ['sponsor_note', /\b(need sponsorship|require sponsorship)\b/],
+  ].map(([category, rx]) => ({ category, rx: new RegExp(rx.source, 'i') }));
+
+  // ------------------------------------------------------------------ structural rules
+  // Each rule: key, test on the combined signal, plus optional element-type constraint.
+  const RULES = [
+    // -- autocomplete attribute is the strongest single signal when present
+    { key: 'identity.first_name', rx: /given name|first name|firstname|forename/, autocomplete: ['given-name'] },
+    { key: 'identity.last_name', rx: /family name|last name|surname|lastname/, autocomplete: ['family-name'] },
+    { key: 'identity.full_name', rx: /(?:^|\s)(full name|your name|applicant name|candidate name|name of applicant)(?:$|\s)/ },
+    { key: 'identity.pronouns', rx: /pronoun/ },
+    { key: 'identity.email', rx: /e-?mail|email address/, autocomplete: ['email'] },
+    { key: 'identity.phone', rx: /phone|mobile|telephone|cell(ular)? (number|phone)|contact number/, autocomplete: ['tel'] },
+    { key: 'identity.location', rx: /\b(location\b|current location|where (are|do) you( currently)? (based|located|living|from)|based in|home ?town|hometown|city and state)\b/ },
+    { key: 'address.line1', rx: /(address|street)\s*(line)?\s*(1)?|address ?1|street address|mailing address/, autocomplete: ['address-line1'] },
+    { key: 'address.line2', rx: /address\s*(line )?2|apartment|suite|unit number|apt/, autocomplete: ['address-line2'] },
+    { key: 'address.city', rx: /\bcity\b|town|suburb/, autocomplete: ['address-level2'] },
+    { key: 'address.state', rx: /\bstate\b|province|region|county/, autocomplete: ['address-level1'] },
+    { key: 'address.postal', rx: /zip|postal|post ?code/, autocomplete: ['postal-code'] },
+    { key: 'address.country', rx: /\bcountry\b|nation/, autocomplete: ['country-name', 'country'] },
+    { key: 'identity.timezone', rx: /time ?zone/ },
+    { key: 'links.linkedin', rx: /linked ?in/ },
+    { key: 'links.github', rx: /github/ },
+    { key: 'links.portfolio', rx: /portfolio|personal (site|website|page)|website|url|online presence|dribbble|behance/ },
+    { key: 'links.twitter', rx: /twitter|x\.com|bluesky|mastodon/ },
+    { key: 'links.other', rx: /other (link|url|profile)|additional (link|url)|social (media|link)/ },
+
+    // -- documents
+    { key: 'doc.resume', types: ['file'], rx: /(resume|résumé|resumé|curriculum vitae|cv\b|latest resume|current resume|upload your resume)/ },
+    { key: 'doc.cover_letter', types: ['file'], rx: /(cover ?(letter|note)|letter of (intent|interest|application)|motivation letter|statement of interest)/ },
+    { key: 'doc.other', types: ['file'], rx: /(transcript|writing sample|portfolio (file|upload)|certification file|additional document|supporting document|attachment)/ },
+
+    // -- employment history (indexed; content.js maps "current"/"most recent" to index 0)
+    { key: 'exp.company', rx: /(current|most recent|previous|present|last)\s*(employer|company|organization|organisation)|employer|company name|organization name|name of (employer|company|organization)/ },
+    { key: 'exp.title', rx: /(current|most recent|previous|present)\s*(job )?(title|position|role)|job title|position title|role title|your (job )?title|designation/ },
+    { key: 'exp.start', rx: /\b(start|from|begin|joining|joined|since)\b\s*(date|month|year|mm)?/, requires: 'employment' },
+    { key: 'exp.end', rx: /\b(end|to|until|through|leaving|left|terminated)\b\s*(date|month|year|mm)?/, requires: 'employment' },
+    { key: 'exp.location', rx: /(job|position|role|employer)\s*location|location of (employment|position)/, requires: 'employment' },
+    { key: 'exp.reason_for_leaving', rx: /reason (for|of) (leaving|separation|departure)|why (did you leave|are you leaving)/ },
+
+    // -- education
+    { key: 'edu.school', rx: /(school|university|college|institution|institute)\b.*(name)?|name of (school|university|college)|highest (level of )?education/ },
+    { key: 'edu.degree', rx: /degree|major|field of study|programme|program of study|qualification|discipline/ },
+    { key: 'edu.year', rx: /(graduation|grad)\s*(year|date)|year (you )?(graduated|completed)|expected graduation/ },
+
+    // -- profile bits
+    { key: 'skills', rx: /\bskills?\b|core competenc\w+|technical (skills|proficienc)|specialt\w+|areas of expertise/ },
+    { key: 'summary', rx: /(professional )?(summary|objective|about you|about yourself|bio|profile description|self description)/ },
+    { key: 'languages', rx: /\blanguages?\b|proficiency in (a )?language/ },
+    { key: 'certifications', rx: /certificat\w+|licence|license|credential|training and certification/ },
+
+    // -- review-flagged
+    { key: 'review.salary', rx: /\b(salar\w+|compensation|desired pay|expected (pay|compensation)|rate expectation)\b/, review: 'salary' },
+    { key: 'review.relocation', rx: /(relocat\w*|willing to (move|relocate)|travel\s*(requirement|%|amount)?|work ?(model|preference)|are you (based|located|able to work))/, review: 'relocation' },
+    { key: 'review.start_date', rx: /(start date|when (can|could) you start|earliest (start|availability)|available (from|to start)|notice period)/, review: 'start_date' },
+    { key: 'review.references', rx: /(reference|referee).*(name|email|phone|relationship)?/, review: 'references' },
+
+    // -- misc common fields
+    { key: 'misc.how_heard', rx: /how (did you (hear|find|learn)|about (this|the) (position|role|opening))|source of (application|awareness)|where did you hear/ },
+    { key: 'misc.currently_employed', rx: /(currently|are you) employed|current employment status/ },
+    { key: 'misc.work_model', rx: /(remote|hybrid|onsite|on-site).*(preference|option|acceptab)|preferred (work )?(model|arrangement)/, review: 'relocation' },
+    { key: 'misc.availability_hours', rx: /hours per week|availability|part[- ]?time hours/ },
+    { key: 'misc.legally_first_name', rx: /legal (first )?name|name (on|as it appears on) (legal )?documents/ },
+    { key: 'misc.preferred_name', rx: /preferred name|nickname|name you (go by|prefer)/ },
+    { key: 'misc.relocation_assistance', rx: /relocation (assistance|package|support) (needed|required)?/, review: 'relocation' },
+    { key: 'misc.notice_period', rx: /notice period|how much notice/, review: 'start_date' },
+    { key: 'misc.visa_note', rx: /visa status (details|notes?)/, review: 'sponsor_note' },
+  ];
+
+  const INTENTS = [
+    // Specific shapes first: the generic "Why <Company>?" fallback must not
+    // swallow "Why are you leaving?" (kept in sync with server/packet.py).
+    ['why_leaving', /\b(leaving|left (your|last|current)|why are you (looking|searching)|reason for (leaving|searching)|why (did you )?(leave|quit)|want to (leave|move on|make a change)|looking for (a |the )?(new|next|different))\b/],
+    ['weakness', /\b(weakness|area of (improvement|growth)|constructive feedback)\b/],
+    ['challenge', /\b(challenge|conflict|disagree|disagreement|failure|failed|mistake|setback|obstacle|hardest|toughest)\b/],
+    ['strength', /\b(greatest strength|superpower|what do you bring|core strength)\b/],
+    ['compensation', /\b(salar\w+|compensation|desired pay|expected (pay|compensation)|rate expectation)\b/],
+    ['start_availability', /\b(start date|when (can|could) you start|available (from|to start)|notice period)\b/],
+    ['work_auth', /\b(authoriz|sponsor|citizen|visa|work permit|employment eligibility)\b/],
+    ['references', /\b(reference|referee|recommender)\b/],
+    ['relocation', /\b(relocat\w*|willing to move|onsite|on-site|travel)\b/],
+    ['prioritization', /\b(prioriti[sz]|juggl|multitask|manage your time|deadlines|backlog)\b/],
+    ['goals', /\b(five years|5 years|career (goal|objective|plan)|where do you (see|want)|long.term)\b/],
+    ['gap', /\b(employment gap|gap in (your )?(employment|resume)|unemployed|between roles)\b/],
+    ['leadership', /\b(lead(ing|ership)?|manag(e|ing|ed)|mentor|influence without|cross.functional)\b/],
+    ['project', /\b(project|ship(ped|ping)?|accomplish(ed)?|proud of|end.to.end|launch)\b/],
+    ['learn', /\b(learn(ed|ing)? (a|new)|upskill|feedback you (received|took)|how do you grow)\b/],
+    ['remote_work', /\b(remote|hybrid|distributed team|async|time ?zone|home office)\b/],
+    ['culture', /\b(culture|values|work environment|ideal (team|workplace)|collaborat\w*)\b/],
+    ['diversity_story', /\b(belong(ing)?|identity|background of your|first in family)\b/],
+    ['experience', /\b(experience with|background in|familiarity|proficien\w*|years of)\b/],
+    ['why_company', /\b(why (do you )?(want|apply|interested|this company|us|our team|join)|what interests you|why should we|why (?!a |an |the |are |do |did |would |you |not )[A-Za-z][A-Za-z0-9&.'-]+)/],
+].map(([name, rx]) => ({ name: name, rx: new RegExp(rx.source, 'i') }));
+
+  const intentOf = (text) => {
+    for (const it of INTENTS) if (it.rx.test(text || '')) return it.name;
+    return '';
+  };
+
+  // ------------------------------------------------------------------ value resolution
+  function resolve(keyPath, snap) {
+    if (!keyPath) return '';
+    const parts = keyPath.split('.');
+    let cur = snap;
+    for (const p of parts) {
+      if (cur == null) return '';
+      cur = cur[p];
+    }
+    if (cur == null) return '';
+    if (Array.isArray(cur)) return cur.join(', ');
+    return String(cur).trim();
+  }
+
+  function answerForKey(structuralKey, snap) {
+    // A structural key that the user may have answered in prose instead.
+    const map = {
+      'review.salary': ['salary_expectation'],
+      'review.relocation': ['relocation'],
+      'review.start_date': ['start_date'],
+      'misc.notice_period': ['notice_period'],
+      'misc.work_model': ['relocation'],
+    };
+    const src = (map[structuralKey] || []).map((k) => resolve('review_only.' + k, snap)).filter(Boolean);
+    return src[0] || '';
+  }
+
+  function matchAnswer(question, snap) {
+    const answers = (snap && snap.answers) || [];
+    const q = norm(question);
+    const qIntent = intentOf(question || '');
+    let best = null;
+    let bestScore = 0;
+    let method = '';
+    for (const a of answers) {
+      if (a.blocked) continue;
+      const ak = norm(a.key || a.question);
+      let score = 0;
+      if (ak && (ak === q || q.includes(ak) || ak.includes(q))) {
+        score = 1;
+        method = 'exact';
+      } else {
+        score = overlap(ak, question);
+        if (qIntent && intentOf(a.question) === qIntent) {
+          score = Math.max(score, 0.72);
+          method = 'intent:' + qIntent;
+        } else if (score > 0.34) {
+          method = 'overlap';
+        }
+      }
+      if (score > bestScore) { bestScore = score; best = a; }
+    }
+    if (!best) return { answer: null, score: 0, method: 'none' };
+    return { answer: best, score: bestScore, method: method || 'overlap' };
+  }
+
+  // ------------------------------------------------------------------ option matching (select / radio)
+  function normalizeOption(s) {
+    return norm(String(s || ''))
+      .replace(/\(optional\)|optional|please select|select an option|choose one|\bna\b/g, ' ')
+      .replace(/[-\u2013\u2014]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function matchOption(options, wanted) {
+    const w = normalizeOption(wanted);
+    if (!w || !options || !options.length) return -1;
+    for (let i = 0; i < options.length; i++) {
+      if (normalizeOption(options[i].label) === w) return i;
+    }
+    for (let i = 0; i < options.length; i++) {
+      const label = normalizeOption(options[i].label);
+      if (label && (label.startsWith(w) || w.startsWith(label) || label.includes(w) || w.includes(label))) return i;
+    }
+    // numeric coercion: "5" vs "5 years" vs "5+ years of experience"
+    const num = (w.match(/\d+/) || [])[0];
+    if (num) {
+      for (let i = 0; i < options.length; i++) {
+        const label = normalizeOption(options[i].label);
+        if (new RegExp('\\b' + num + '\\b').test(label)) return i;
+      }
+    }
+    const yes = /^(yes|y|true|1|available|current|present)\b/.test(w);
+    const no = /^(no|n|false|0|none|not )\b/.test(w);
+    if (yes || no) {
+      for (let i = 0; i < options.length; i++) {
+        const label = normalizeOption(options[i].label);
+        if (yes && /^(yes|y|true|1)\b/.test(label)) return i;
+        if (no && /^(no|n|false|0)\b/.test(label)) return i;
+      }
+    }
+    return -1;
+  }
+
+  function booleanFor(text, wanted) {
+    // Decide yes/no for a checkbox or radio group from a value like "yes" or a URL.
+    const label = normalizeOption(text);
+    const w = normalizeOption(wanted);
+    if (/^(yes|y|true|1|current|present|available)\b/.test(w)) {
+      if (/^(no|n|false|0|non|not)\b/.test(label)) return false;
+      if (/(yes|current|present|\btrue\b)/.test(label)) return true;
+    }
+    if (/^(no|n|false|0|none)\b/.test(w)) {
+      if (/\bno\b|^n$|non/.test(label)) return true;
+      if (/yes/.test(label)) return false;
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------------ value shaping
+  const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+
+  // A date that cannot exist must never reach an application. "2026-24" parses into
+  // month 24 and would type 24/2026 into a real form, so every parsed date has to
+  // look like a calendar date before it is used.
+  function sane(d) {
+    if (!d || d.raw) return d;
+    const yearNow = new Date().getFullYear();
+    if (!d.y || d.y < 1900 || d.y > yearNow + 1) return null;
+    if (d.mo < 0 || d.mo > 12) return null;
+    if (d.d < 0 || d.d > 31) return null;
+    return d;
+  }
+
+  function parseDate(value) {
+    const s = String(value || '').trim();
+    if (!s) return null;
+    if (/^(present|current|now|ongoing|tbd|unknown|n\/?a)$/i.test(s)) return null;
+    let m = s.match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?$/);
+    if (m) return sane({ y: +m[1], mo: +m[2], d: m[3] ? +m[3] : 0, partial: m[3] ? '' : 'month' });
+    m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+    if (m) return sane({ y: +m[3] < 100 ? 2000 + +m[3] : +m[3], mo: +m[1], d: +m[2] });
+    m = s.match(/^([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/i);
+    if (m) return sane({ y: +m[3], mo: MONTHS[m[1].slice(0, 3).toLowerCase()], d: +m[2] });
+    m = s.match(/^([a-z]{3,9})\.?\s+(\d{4})$/i);
+    if (m) return sane({ y: +m[2], mo: MONTHS[m[1].slice(0, 3).toLowerCase()], d: 0, partial: 'month' });
+    m = s.match(/^(\d{4})$/);
+    if (m) return sane({ y: +m[1], mo: 0, d: 0, partial: 'year' });
+    m = s.match(/^(\d{1,2})[-/.](\d{4})$/);
+    if (m) return sane({ y: +m[2], mo: +m[1], d: 0, partial: 'month' });
+    // Anything else is passed through as written ("Summer 2020", "Expected May 2026")
+    // but only if it is short and actually contains a plausible year -- otherwise a
+    // typo reaches the form as free text.
+    if (s.length <= 24 && /\b(19|20)\d{2}\b/.test(s)) {
+      const year = +(s.match(/\b((?:19|20)\d{2})\b/) || [])[1];
+      if (year >= 1900 && year <= new Date().getFullYear() + 1) return { raw: s };
+    }
+    return null;
+  }
+
+  // "2023" is not January. A resume that says only the year must not become
+  // 01/01/2023 on a real application.
+  function datePrecision(value) {
+    const d = parseDate(value);
+    return d && d.partial ? d.partial : '';
+  }
+
+  function formatDate(value, field) {
+    const d = parseDate(value);
+    if (!d) return '';
+    const p2 = (n) => String(n).padStart(2, '0');
+    if (field && field.type === 'month') return d.mo ? `${d.y}-${p2(d.mo)}` : '';
+    if (field && field.type === 'number') {
+      const label = norm((field.label || '') + ' ' + (field.name || ''));
+      if (/year/.test(label) && !/month/.test(label)) return String(d.y);
+      if (/month/.test(label)) return d.mo ? String(d.mo) : '';
+    }
+    if (d.raw) return d.raw;
+    const fmt = (field && field.dateHint) || 'mdy';
+    if (!d.mo) return (field && field.type === 'month') ? '' : String(d.y);
+    if (!d.d && fmt !== 'my' && fmt !== 'monthname') {
+      // day unknown: month/year beats inventing the first of the month
+      return fmt === 'ymd' ? `${d.y}-${p2(d.mo)}` : `${p2(d.mo)}/${d.y}`;
+    }
+    if (fmt === 'ymd') return `${d.y}-${p2(d.mo)}-${p2(d.d)}`;
+    if (fmt === 'my') return `${p2(d.mo)}/${d.y}`;
+    if (fmt === 'dmy') return `${p2(d.d)}/${p2(d.mo)}/${d.y}`;
+    if (fmt === 'monthname') {
+      const names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return `${names[(d.mo || 1) - 1]} ${d.y}`;
+    }
+    return `${p2(d.mo)}/${p2(d.d)}/${d.y}`;
+  }
+
+  // Which date format does this control want? Inferred from placeholder/mask/name.
+  function dateHintFor(field) {
+    const hint = norm((field.placeholder || '') + ' ' + (field.name || '') + ' ' + (field.id || ''));
+    if (/mm\/yy\b|mm\/yyyy|\bmm[-/ ]yyyy/.test(hint)) return 'my';
+    if (/dd\/mm|yyyy[-/]mm[-/]dd|iso/.test(hint)) return 'ymd';
+    if (/dd\/mm\/(yyyy|yy)/.test(hint)) return 'dmy';
+    if (/month.*year|month \/ year/.test(hint)) return 'monthname';
+    if (/\bmm\/dd\/yy/.test(hint)) return 'mdy';
+    return '';
+  }
+
+  // Is this control a date control? Stops "willing TO relocate" being read as an
+  // employment end date, which is exactly the kind of confident nonsense to avoid.
+  function looksLikeDate(field) {
+    if (field.type === 'date' || field.type === 'month') return true;
+    if (field.label && field.label.split(/\s+/).length > 6) return false;
+    const sig = norm((field.label || '') + ' ' + (field.placeholder || '') + ' ' + (field.name || '') + ' ' + (field.id || ''));
+    if (/\b(date|month|year)\b/.test(sig)) return true;
+    return /\d{1,2}\/\d{1,2}\/\d{2,4}|yyyy|mm\/dd|dd\/mm|####/.test(norm(field.placeholder || ''));
+  }
+
+  // A start/end date belongs to an employment row only when the surrounding section
+  // says so. Without this, "Earliest start date" gets filled with the first job's
+  // start date -- a wrong answer that looks completely plausible.
+  function employmentContext(field) {
+    const hay = norm((field.section || '') + ' ' + (field.legend || '') + ' ' + (field.groupLabel || ''));
+    return /\b(experience|employment|work history|work history|previous (job|role|position|employer)|professional background|job history)\b/.test(hay);
+  }
+
+  // A sentence on a form is an employer question; a short string is a field label.
+  function looksLikeQuestion(field) {
+    const label = String(field.label || field.legend || field.section || '').trim();
+    if (!label) return false;
+    const words = label.split(/\s+/).length;
+    if (/[?]$/.test(label) && words >= 3) return true;
+    return words >= 8;
+  }
+
+  function splitLocation(location) {
+    const parts = String(location || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return { city: parts[0] || '', state: parts[1] || '', country: parts.slice(2).join(', ') || parts[1] || '' };
+  }
+
+  function digits(phone) { return String(phone || '').replace(/[^\d+]/g, ''); }
+
+  // ------------------------------------------------------------------ decision
+  function signal(field) {
+    return [
+      field.label, field.aria, field.placeholder, field.name, field.id, field.title, field.testid,
+      field.legend, field.section, field.help, field.role, field.groupLabel,
+      (field.options || []).slice(0, 6).map((o) => o.label).join(' '),
+    ].filter(Boolean).join(' | ');
+  }
+
+  function classify(field, snap, settings) {
+    const sig = signal(field);
+    const n = norm(sig);
+    const out = {
+      action: 'skip',
+      key: null,
+      value: '',
+      reason: '',
+      confidence: 0,
+      category: null,
+      review: null,
+      method: '',
+    };
+
+    if (!field.visible) { out.reason = 'hidden'; return out; }
+    if (field.type === 'password') { out.reason = 'password field'; return out; }
+    if (/(credit ?card|cvv|card number|cvc|expiry)/.test(n)) { out.action = 'block'; out.category = 'financial_and_credit'; out.reason = 'payment credential'; return out; }
+
+    // 1. compliance wall -- absolute, not user-configurable. A wrong answer here is a
+    //    legal problem for the applicant, not a formatting problem.
+    for (const b of BLOCKED) {
+      if (b.rx.test(n)) {
+        out.action = 'block';
+        out.category = b.category;
+        out.reason = b.category;
+        out.confidence = 1;
+        return out;
+      }
+    }
+
+    // 2. password managers' own territory / irrelevant
+    if (/(captcha|recaptcha|searchbox|query|newsletter|subscribe|remember me|username|password)/.test(n) && field.type !== 'email') {
+      out.reason = 'not application data';
+      return out;
+    }
+
+    // 3. a sentence on a form is a question, not a label: consult your approved
+    //    answers first so rules like "willing TO relocate" cannot hijack it.
+    const proseTarget = field.tag === 'textarea' || field.type === 'textarea' || field.type === 'text'
+      || field.tag === 'select' || field.type === 'radio' || field.type === 'checkbox';
+
+    function answerAttempt() {
+      const q = field.label || field.legend || field.section || field.placeholder;
+      const m = matchAnswer(q, snap);
+      if (m.answer && m.answer.blocked) {
+        return { action: 'block', category: m.answer.category || 'compliance', reason: 'your packet marks this as a question only you may answer', confidence: 1, value: '' };
+      }
+      if (m.answer && m.score >= 0.6 && m.answer.answer && !m.answer.needs_input && !/\[needs input\]/i.test(m.answer.answer)) {
+        return { action: 'fill', key: 'answer:' + clip(q, 60), value: m.answer.answer, confidence: m.score, method: m.method, review: m.answer.review || null, reason: '' };
+      }
+      if (m.answer && (m.answer.needs_input || /\[needs input\]/i.test(m.answer.answer || ''))) {
+        return { action: 'skip', reason: 'your approved draft for this still has an open gap', confidence: m.score, value: '' };
+      }
+      return { action: null, score: m.score, reason: m.answer ? `closest answer only ${Math.round(m.score * 100)}% match` : 'no drafted answer for this question' };
+    }
+
+    // Plenty of short "questions" are really facts wearing a question mark:
+    // "Where are you based?", "What is your salary expectation?". Answer those from
+    // the profile rather than matching them against drafted prose.
+    function factRuleAhead() {
+      const words = String(field.label || field.aria || '').split(/\s+/).filter(Boolean).length;
+      if (words > 9) return false;
+      return RULES.some((rule) => {
+        if (!/^(identity|review|misc)\./.test(rule.key)) return false;
+        if (rule.requires === 'date' && !looksLikeDate(field)) return false;
+        if (rule.requires === 'employment') return false;
+        return rule.rx.test(n);
+      });
+    }
+
+    if (proseTarget && looksLikeQuestion(field) && !factRuleAhead()) {
+      const attempt = answerAttempt();
+      if (attempt.action) { Object.assign(out, attempt); return out; }
+    }
+
+    // 4. structural rules
+    let chosen = null;
+    let ruleAutocomplete = null;
+    for (const rule of RULES) {
+      if (rule.requires === 'date' && !looksLikeDate(field)) continue;
+      if (rule.requires === 'employment' && !(looksLikeDate(field) && employmentContext(field))) continue;
+      if (rule.types && field.tag !== 'input' && field.tag !== 'textarea' && field.tag !== 'select' && field.tag !== 'file') continue;
+      if (rule.types && rule.types.indexOf(field.type) < 0 && rule.types.indexOf(field.tag) < 0) continue;
+      let hit = false;
+      if (rule.rx.test(n)) hit = true;
+      if (!hit && rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0) hit = true;
+      if (hit) { chosen = rule; ruleAutocomplete = rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0; break; }
+    }
+
+    if (chosen) {
+      out.key = chosen.key;
+      out.confidence = ruleAutocomplete ? 0.97 : 0.8;
+      out.method = ruleAutocomplete ? 'autocomplete' : 'label-rule';
+      out.review = chosen.review || null;
+
+      if (chosen.key === 'doc.resume') { out.action = 'upload'; out.value = 'resume'; out.confidence = 0.9; return out; }
+      if (chosen.key === 'doc.cover_letter') { out.action = 'upload'; out.value = 'cover_letter'; out.confidence = 0.9; return out; }
+      if (chosen.key === 'doc.other') { out.action = 'skip'; out.reason = 'upload needs your judgement'; return out; }
+
+      let value = '';
+      if (chosen.key.indexOf('exp.') === 0) {
+        const sub = chosen.key.slice(4);
+        const idx = field.index || 0;
+        const e = ((snap.experience || [])[idx]) || (snap.experience || [])[0] || {};
+        value = String(e[sub] || '');
+        if (sub === 'end' && (e.end || '').match(/present|current/i)) value = '';
+        if (sub === 'start' || sub === 'end') out.isDate = true;
+      } else if (chosen.key.indexOf('edu.') === 0) {
+        const sub = chosen.key.slice(4);
+        const e = (snap.education || [])[field.index || 0] || (snap.education || [])[0] || {};
+        const combined = `${e.degree || ''} ${e.field || ''}`.trim();
+        if (sub === 'year') value = String(e.end || '');
+        else if (sub === 'school') value = String(e.school || '');
+        else value = combined.length > String(e.degree || '').length + 1 ? combined : String(e.degree || '');
+        if (sub === 'year') out.isDate = true;
+      } else if (chosen.key.indexOf('review.') === 0 || chosen.key.indexOf('misc.') === 0) {
+        value = answerForKey(chosen.key, snap);
+        if (chosen.key === 'misc.currently_employed') {
+          const latest = (snap.experience || [])[0] || {};
+          value = latest.current ? 'yes' : 'no';
+        }
+        if (chosen.key === 'misc.how_heard') { out.action = 'skip'; out.reason = 'only you know how you found it'; return out; }
+        if (chosen.key === 'misc.preferred_name' || chosen.key === 'misc.legally_first_name') value = resolve('identity.first_name', snap);
+      } else if (chosen.key.indexOf('address.') === 0) {
+        const loc = splitLocation(resolve('identity.location', snap));
+        value = resolve(chosen.key, snap) || loc[chosen.key.split('.')[1]] || '';
+      } else if (chosen.key === 'identity.location') {
+        value = resolve('identity.location', snap);
+      } else if (chosen.key === 'identity.phone') {
+        value = digits(resolve('identity.phone', snap));
+      } else if (chosen.key === 'skills') {
+        value = (snap.skills || []).join(', ');
+      } else {
+        value = resolve(chosen.key, snap);
+      }
+
+      if (!value || /\[needs input\]/i.test(value)) { out.action = 'skip'; out.reason = 'nothing in your profile for ' + chosen.key; out.key = chosen.key; return out; }
+      out.action = 'fill';
+      out.value = value;
+      if (out.isDate) {
+        const shaped = formatDate(value, field);
+        const partial = datePrecision(value);
+        if (!shaped) {
+          out.action = 'skip';
+          out.reason = partial
+            ? `your profile only has the ${partial === 'year' ? 'year' : 'month'} for this, and the field wants more`
+            : `the date in your profile ("${value}") is not valid -- fix it in Profile`;
+          return out;
+        }
+        out.value = shaped;
+        if (partial) out.review = out.review || 'date_precision';
+      }
+      else if (field.dateHint || (field.type === 'month')) out.value = formatDate(value, field) || value;
+      return out;
+    }
+
+    // 5. treat it as an employer question
+    if (proseTarget && (field.label || field.legend || field.section || '').length >= 6) {
+      const attempt = answerAttempt();
+      if (attempt.action) { Object.assign(out, attempt); return out; }
+      out.reason = attempt.reason || 'no drafted answer for this question';
+      out.confidence = attempt.score || 0;
+      return out;
+    }
+
+    out.reason = 'unrecognised field';
+    return out;
+  }
+
+  function isSubmitText(text) {
+    return /\b(submit|apply now|apply|finish|send application|complete application|review and submit|confirm and submit|sign and submit)\b/i.test(String(text || ''));
+  }
+
+  function isNextText(text) {
+    const t = String(text || '').trim();
+    if (isSubmitText(t)) return false;
+    return /^(next|continue|next step|next page|save and continue|save & continue|forward|›|>)$/i.test(t);
+  }
+
+  root.FILLDESK_MATCHER = {
+    norm, key, signal, classify, matchAnswer, matchOption, normalizeOption, booleanFor,
+    formatDate, parseDate, datePrecision, dateHintFor, looksLikeDate, looksLikeQuestion, employmentContext,
+    splitLocation, digits, isSubmitText, isNextText, intentOf, BLOCKED, REVIEW, RULES, INTENTS, overlap,
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : window);

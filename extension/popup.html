@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FillDesk</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header>
+  <span class="logo">FillDesk</span>
+  <span id="dot" class="dot"></span>
+  <span id="status" class="status">checking…</span>
+</header>
+
+<main>
+  <section id="conn">
+    <label>Local server</label>
+    <input id="server" placeholder="http://127.0.0.1:8756">
+    <label>Token (dashboard → Settings → Browser extension)</label>
+    <input id="token" type="password" placeholder="paste token">
+    <div class="row">
+      <button id="save" class="pri">Save connection</button>
+      <button id="dash">Open dashboard</button>
+    </div>
+  </section>
+
+  <section id="page" class="hidden">
+    <h2>This page</h2>
+    <div class="row">
+      <button id="fill" class="pri">Fill application</button>
+      <button id="preview">Preview</button>
+    </div>
+    <div class="row">
+      <button id="savejob">Save this job</button>
+      <button id="next">Next page</button>
+    </div>
+    <div id="pageinfo" class="muted"></div>
+  </section>
+
+  <section id="packets">
+    <h2>Packet to autofill with</h2>
+    <select id="packet"><option value="">most recently approved</option></select>
+    <p class="muted">Only <strong>approved</strong> packets appear here. FillDesk will not type anything you have not approved.</p>
+    <div id="counts" class="muted"></div>
+  </section>
+
+  <section>
+    <h2>Keys</h2>
+    <p class="muted"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> fill · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> save job</p>
+  </section>
+</main>
+
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FillDesk — job application filler</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">FillDesk<span class="dot"></span></div>
+  <nav class="tabs">
+    <button data-tab="profile" class="tab active">Profile</button>
+    <button data-tab="jobs" class="tab">Jobs</button>
+    <button data-tab="packets" class="tab">Packets</button>
+    <button data-tab="settings" class="tab">Settings</button>
+  </nav>
+  <div class="status" id="status">
+    <span class="pill" id="pill-llm" title="Configured model">llm …</span>
+    <span class="pill" id="pill-profile" title="Profile completeness">profile …</span>
+    <span class="pill" id="pill-counts" title="Saved jobs and packets">0 jobs</span>
+  </div>
+</header>
+
+<main>
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ===================================================== PROFILE -->
+  <section id="tab-profile" class="panel active">
+    <div class="panel-head">
+      <h1>Your master profile</h1>
+      <p>Everything the autofiller is allowed to type comes from here. Nothing is sent anywhere except your chosen model provider.</p>
+    </div>
+
+    <div id="p-warnings" class="callout warn hidden"></div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>Identity</h2>
+        <div class="row"><label>Full name</label><input id="p-name" placeholder="Alex Rivera"></div>
+        <div class="row"><label>Email</label><input id="p-email" type="email" placeholder="alex@example.com"></div>
+        <div class="row"><label>Phone</label><input id="p-phone" placeholder="+1 415 555 0100"></div>
+        <div class="row"><label>City, country</label><input id="p-location" placeholder="San Francisco, CA"></div>
+        <div class="row"><label>Headline</label><input id="p-headline" placeholder="Senior Product Manager"></div>
+        <div class="row"><label>Pronouns</label><input id="p-pronouns" placeholder="she/her"></div>
+        <div class="row"><label>LinkedIn</label><input id="p-linkedin" placeholder="https://linkedin.com/in/…"></div>
+        <div class="row"><label>GitHub / portfolio</label><input id="p-github" placeholder="https://…"></div>
+        <div class="row"><label>Other link</label><input id="p-other" placeholder="https://…"></div>
+      </div>
+
+      <div class="card">
+        <h2>Answers the forms always ask</h2>
+        <p class="muted">These are filled into employer forms when asked, and always flagged for a second look. They are <strong>never</strong> used for compliance questions.</p>
+        <div class="row"><label>Salary expectation</label><input id="p-salary" placeholder="$180,000 base / negotiable"></div>
+        <div class="row"><label>Relocation / work model</label><input id="p-relocation" placeholder="Remote or SF hybrid"></div>
+        <div class="row"><label>Earliest start</label><input id="p-start" placeholder="4 weeks after offer"></div>
+        <div class="row"><label>Notice period</label><input id="p-notice" placeholder="4 weeks"></div>
+        <div class="row"><label>Work authorization note</label><textarea id="p-workauth" rows="2" placeholder="For your own reference only — FillDesk never answers citizenship, sponsorship, or EEO questions."></textarea></div>
+        <div class="notice">
+          <strong>Hard refusal.</strong> FillDesk will not answer race, ethnicity, gender, religion, sexual orientation,
+          disability, veteran status, work authorization, sponsorship, age, criminal-history, or any attestation or
+          signature. Those are answered by you, on the employer's page, every time.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Master resume</h2>
+      <p class="muted">Plain text or markdown. This is the source of truth every tailored resume is built from — the more accurate it is, the less the model has to guess.</p>
+      <div class="row filepick">
+        <input type="file" id="p-file" accept=".pdf,.docx,.txt,.md,.rtf">
+        <button class="ghost" id="p-paste-toggle">Paste text instead</button>
+        <span id="p-file-status" class="muted"></span>
+      </div>
+      <textarea id="p-resume" rows="14" placeholder="# Your Name&#10;&#10;## Summary&#10;…"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Summary &amp; skills</h2>
+      <div class="row"><label>Professional summary</label><textarea id="p-summary" rows="3"></textarea></div>
+      <div class="row"><label>Skills (comma separated)</label><textarea id="p-skills" rows="2" placeholder="SQL, A/B testing, roadmapping"></textarea></div>
+      <div class="row"><label>Certifications</label><input id="p-certs" placeholder="CSM, AWS SA Associate"></div>
+      <div class="row"><label>Languages</label><input id="p-languages" placeholder="English (native), Spanish (professional)"></div>
+    </div>
+
+    <div class="card">
+      <h2>Experience</h2>
+      <div id="p-experience"></div>
+      <button class="ghost" id="p-add-exp">+ Add role</button>
+    </div>
+
+    <div class="card">
+      <h2>Education</h2>
+      <div id="p-education"></div>
+      <button class="ghost" id="p-add-edu">+ Add education</button>
+    </div>
+
+    <div class="card">
+      <h2>Your reusable answers</h2>
+      <p class="muted">Highest-return 20 minutes in this whole tool. Write real answers once to the five questions every application asks; every packet reuses them instead of generating filler.</p>
+      <div id="p-boilerplate"></div>
+      <button class="ghost" id="p-add-boiler">+ Add answer</button>
+    </div>
+
+    <div class="savebar">
+      <button class="primary" id="p-save">Save profile</button>
+      <span id="p-saved" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- ===================================================== JOBS -->
+  <section id="tab-jobs" class="panel">
+    <div class="panel-head">
+      <h1>Saved jobs</h1>
+      <p>Use the extension's <em>Save job</em> button on a listing, or paste one here.</p>
+    </div>
+
+    <div class="card">
+      <h2>Add a job manually</h2>
+      <div class="grid two">
+        <div class="row"><label>Title</label><input id="j-title"></div>
+        <div class="row"><label>Company</label><input id="j-company"></div>
+        <div class="row"><label>Location</label><input id="j-location"></div>
+        <div class="row"><label>URL</label><input id="j-url" placeholder="https://…"></div>
+      </div>
+      <div class="row"><label>Job description</label><textarea id="j-desc" rows="8" placeholder="Paste the whole posting, including the questions section if you can see it."></textarea></div>
+      <button class="primary" id="j-add">Save job</button>
+    </div>
+
+    <div class="card">
+      <h2>Queue <span class="muted" id="jobs-count"></span></h2>
+      <div id="jobs-list" class="list"></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== PACKETS -->
+  <section id="tab-packets" class="panel">
+    <div class="panel-head">
+      <h1>Application packets</h1>
+      <p>Tailored resume + cover letter + answers. Read every word. Approving is what unlocks autofill.</p>
+    </div>
+    <div class="card">
+      <h2>Packets <span class="muted" id="packets-count"></span></h2>
+      <div id="packets-list" class="list"></div>
+    </div>
+  </section>
+
+  <section id="packet-detail" class="panel">
+    <div class="panel-head">
+      <button class="ghost" id="pd-back">← Packets</button>
+      <h1 id="pd-title">Packet</h1>
+      <p id="pd-sub" class="muted"></p>
+    </div>
+    <div id="pd-warnings"></div>
+
+    <div class="card">
+      <h2>Tailored resume <span class="badge" id="pd-fit"></span></h2>
+      <div class="grid two">
+        <div>
+          <textarea id="pd-resume" rows="22" class="mono"></textarea>
+          <div class="row inline">
+            <button id="pd-refresh-ats">Re-check keywords</button>
+            <span id="pd-ats" class="muted"></span>
+          </div>
+        </div>
+        <div>
+          <div class="preview" id="pd-preview"></div>
+          <div class="row inline">
+            <button id="pd-changes-toggle">What the writer changed</button>
+          </div>
+          <ul id="pd-changes" class="changes hidden"></ul>
+          <div id="pd-missing" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Cover letter <span class="badge" id="pd-words"></span></h2>
+      <textarea id="pd-cover" rows="12"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Employer questions</h2>
+      <p class="muted">Blue = drafted for you. Amber = verify. Red = FillDesk refuses and you must answer on the employer's page.</p>
+      <div id="pd-answers"></div>
+    </div>
+
+    <div class="savebar sticky">
+      <button class="primary" id="pd-approve">Approve packet</button>
+      <button id="pd-save">Save edits</button>
+      <a id="pd-dl-docx" class="btnlike" download>Resume .docx</a>
+      <a id="pd-dl-html" class="btnlike" target="_blank">Resume → PDF (print)</a>
+      <a id="pd-dl-cover" class="btnlike" download>Cover letter .docx</a>
+      <span id="pd-state" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- ===================================================== SETTINGS -->
+  <section id="tab-settings" class="panel">
+    <div class="panel-head">
+      <h1>Settings</h1>
+      <p>Model, autofill behaviour, and the extension token. Stored in <code>data/settings.json</code> on this machine.</p>
+    </div>
+
+    <div class="card">
+      <h2>Writing model</h2>
+      <p class="muted">Works with no key at all (rule-based packets: template letter, your boilerplate answers, keyword re-ranking). Add a key for full drafting.</p>
+      <div class="grid two">
+        <div class="row"><label>Provider</label>
+          <select id="s-provider">
+            <option value="auto">auto-detect</option>
+            <option value="openai">OpenAI or any OpenAI-compatible endpoint</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="ollama">Ollama (local, no key)</option>
+            <option value="none">none — rule-based only</option>
+          </select>
+        </div>
+        <div class="row"><label>Model</label><input id="s-model" placeholder="gpt-4o-mini / claude-sonnet-4-20250514 / llama3.1"></div>
+        <div class="row"><label>Base URL</label><input id="s-base" placeholder="https://api.openai.com/v1 or http://localhost:11434/v1"></div>
+        <div class="row"><label>API key</label><input id="s-key" type="password" placeholder="stored only in data/settings.json"></div>
+        <div class="row"><label>Temperature</label><input id="s-temp" type="number" step="0.1" min="0" max="1"></div>
+        <div class="row"><label>Max tokens</label><input id="s-maxtok" type="number" step="256" min="512"></div>
+        <label class="check"><input type="checkbox" id="s-nothink"> Don't let reasoning models think out loud (faster, and stops truncated packets)</label>
+      </div>
+      <button id="s-test">Test model</button>
+      <code id="s-test-out" class="block"></code>
+    </div>
+
+    <div class="card">
+      <h2>Autofill behaviour</h2>
+      <label class="check"><input type="checkbox" id="s-overwrite"> Overwrite fields that already contain text</label>
+      <label class="check"><input type="checkbox" id="s-nav"> Allow clicking “Next / Continue” on multi-page forms (never Submit)</label>
+      <label class="check"><input type="checkbox" id="s-upload"> Attach the approved resume and cover letter to upload fields</label>
+      <label class="check"><input type="checkbox" id="s-block" checked disabled> Refuse protected-class / compliance fields <span class="muted">(always on — not configurable)</span></label>
+      <div class="row"><label>Fill pace (ms per field) — so you can watch it</label><input id="s-delay" type="number" step="40" min="0" max="2000"></div>
+    </div>
+
+    <div class="card">
+      <h2>Packet defaults</h2>
+      <label class="check"><input type="checkbox" id="s-tailor"> Tailor the resume for every packet</label>
+      <label class="check"><input type="checkbox" id="s-letter"> Write a cover letter</label>
+      <div class="row"><label>Target length (pages)</label><input id="s-pages" type="number" min="1" max="3" step="1"></div>
+    </div>
+
+    <div class="savebar">
+      <button class="primary" id="s-save">Save settings</button>
+      <span id="s-saved" class="muted"></span>
+    </div>
+
+    <div class="card">
+      <h2>Browser extension</h2>
+      <ol class="steps">
+        <li>Chrome → <code>chrome://extensions</code> → turn on <strong>Developer mode</strong>.</li>
+        <li><strong>Load unpacked</strong> → pick the <code>extension/</code> folder of this project.</li>
+        <li>Paste the token below into the extension (its toolbar icon → Settings). Done.</li>
+      </ol>
+      <div class="row inline">
+        <input id="s-token" readonly class="mono">
+        <button id="s-copy">Copy token</button>
+      </div>
+      <p class="muted">The token exists because this API holds your name, address, work history and resume. Without it, any page that guesses port 8756 could read them.</p>
+    </div>
+
+    <div class="card">
+      <h2>Test it before a real application</h2>
+      <p class="muted">A sample application form served from this server, with the usual compliance traps in it. The extension can reach it because it is http, and the Submit button is inert.</p>
+      <a class="btnlike" href="/preview.html" target="_blank" rel="noopener">Open the sample application form →</a>
+    </div>
+
+    <div class="card">
+      <h2>Where this stand out vs the paid tools</h2>
+      <div id="stats" class="stats"></div>
+      <p class="muted">Counted locally from your own autofill runs: fields filled, fields it could not match, fields it refused. If a site keeps producing unmatched fields, that is the honest coverage answer — no vendor publishes one.</p>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden"><div class="modal-box"><h3 id="modal-title"></h3><div id="modal-body"></div><button id="modal-close" class="primary">Close</button></div></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
