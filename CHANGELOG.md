@@ -11,6 +11,13 @@
   sentence by sentence, claims are replaced with `[NEEDS INPUT]`, and the removed
   sentences are listed in the dashboard. Nine classes: work authorization,
   attestations, criminal history, age, protected class, disability, veteran, health.
+- **Calendar date pickers**, one widget shared by the dashboard and the extension:
+  month+year for work history, bare year for schooling, full date for "earliest
+  start", and a *Year only* escape hatch because a bare year is a true answer and a
+  invented day is not. In the panel's per-field card a picked date is re-shaped into
+  the format that field asked for.
+- `Ask per field` no longer looks disabled when it is off (dashed outline, and the
+  label shows ✓ / ○), and a real reviewer read the old dimmed style as "cannot click".
 - **Profile importers**: `tools/import_skills.py` (text lists) and
   `tools/import_linkedin.py` (your own LinkedIn data export — never account access).
 - **Dashboard deep links** (`#packet=…`, `#job=…`) so panel buttons land somewhere.

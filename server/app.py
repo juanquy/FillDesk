@@ -572,7 +572,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         if method != "GET":
             self._send(405, {"error": "method not allowed"})
             return
+        if path.startswith("/shared/"):
+            return self._shared_script(path[len("/shared/"):])
         self._static(path)
+
+    def _shared_script(self, name: str) -> None:
+        """The calendar widget is one file shared by the extension and the dashboard.
+        Served by exact name so it cannot become a path-traversal hole."""
+        if name != "datepicker.js":
+            return self._send(404, {"error": "not found"})
+        target = (config.ROOT / "extension" / name).resolve()
+        if not target.is_file():
+            return self._send(404, {"error": "not found"})
+        self._send(200, None, {"__raw__": target.read_bytes(),
+                               "__type__": "text/javascript; charset=utf-8"})
 
     def _static(self, path: str) -> None:
         rel = "index.html" if path in ("/", "") else path.lstrip("/")

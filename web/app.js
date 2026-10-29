@@ -142,16 +142,27 @@ function renderProfile() {
   renderExperience(); renderEducation(); renderBoilerplate();
 }
 
+/** Give every date field in a scope its calendar button (see shared/datepicker.js). */
+function bindCalendars(scope) {
+  if (window.FILLDESK_CAL) window.FILLDESK_CAL.attachAll(scope || document, document);
+}
+
 function itemCard(host, item, fields, defaults) {
   const wrap = document.createElement('div');
   wrap.className = 'sub';
   const id = item.id || (defaults.id_prefix + '_' + Math.random().toString(36).slice(2, 8));
-  const rows = fields.map((f) => `
+  const rows = fields.map((f) => {
+    // The picker marker has to land INSIDE the control tag: sitting it outside the
+    // branch puts the attribute in the markup as loose text and no button ever binds.
+    const cal = f.cal ? ` data-cal="${f.cal}"` : '';
+    const control = f.multiline
+      ? `<textarea data-k="${f.key}"${cal} rows="4" class="${f.key === 'bullets' ? 'mono' : ''}" placeholder="${esc(f.ph || '')}">${esc(f.key === 'bullets' ? (item[f.key] || []).join('\n') : item[f.key] || '')}</textarea>`
+      : `<input data-k="${f.key}"${cal} value="${esc(item[f.key] || '')}" placeholder="${esc(f.ph || '')}">`;
+    return `
     <div class="row col-${f.key}"><label>${esc(f.label)}</label>
-      ${f.multiline
-        ? `<textarea data-k="${f.key}" rows="4" class="${f.key === 'bullets' ? 'mono' : ''}" placeholder="${esc(f.ph || '')}">${esc(f.key === 'bullets' ? (item[f.key] || []).join('\n') : item[f.key] || '')}</textarea>`
-        : `<input data-k="${f.key}" value="${esc(item[f.key] || '')}" placeholder="${esc(f.ph || '')}">`}
-    </div>`).join('');
+      ${control}
+    </div>`;
+  }).join('');
   wrap.innerHTML = `<div class="head"><span class="muted">${esc(item.title || item.label || item.school || 'entry')}</span>
       <button class="x ghost" type="button">remove</button></div>
       <div class="${fields.some((f) => f.multiline) ? '' : 'grid3'}">${rows}</div>`;
@@ -179,8 +190,8 @@ const EXP_FIELDS = [
   { key: 'company', label: 'Company', ph: 'Figma' },
   { key: 'title', label: 'Title', ph: 'Senior Product Manager' },
   { key: 'location', label: 'Location', ph: 'Remote' },
-  { key: 'start', label: 'Start', ph: '2021-06' },
-  { key: 'end', label: 'End', ph: 'Present' },
+  { key: 'start', label: 'Start', ph: '2021-06', cal: 'ym' },
+  { key: 'end', label: 'End', ph: 'Present', cal: 'ym' },
   { key: 'context', label: 'What the company/product does', multiline: true, ph: 'One line so the writer understands the scope.' },
   { key: 'bullets', label: 'Achievements (one per line — keep the numbers)', multiline: true, ph: 'Rebuilt checkout → +23% paid conversion' },
   { key: 'tech', label: 'Tools / tech used here (comma separated)', list: true },
@@ -189,7 +200,8 @@ const EDU_FIELDS = [
   { key: 'school', label: 'School', ph: 'UC Berkeley' },
   { key: 'degree', label: 'Degree', ph: 'BS' },
   { key: 'field', label: 'Field', ph: 'EECS' },
-  { key: 'start', label: 'Start' }, { key: 'end', label: 'End' }, { key: 'notes', label: 'Notes (honours, thesis)' },
+  { key: 'start', label: 'Start', cal: 'y' }, { key: 'end', label: 'End', cal: 'y' },
+  { key: 'notes', label: 'Notes (honours, thesis)' },
 ];
 const BOIL_FIELDS = [
   { key: 'label', label: 'Question this answers', ph: 'Why this company?' },
@@ -199,17 +211,19 @@ const BOIL_FIELDS = [
 function renderExperience() {
   const host = $('#p-experience'); host.innerHTML = '';
   (PROFILE.experience || []).forEach((e) => itemCard(host, e, EXP_FIELDS, { id_prefix: 'exp' }));
+  bindCalendars(host);
 }
 function renderEducation() {
   const host = $('#p-education'); host.innerHTML = '';
   (PROFILE.education || []).forEach((e) => itemCard(host, e, EDU_FIELDS, { id_prefix: 'edu' }));
+  bindCalendars(host);
 }
 function renderBoilerplate() {
   const host = $('#p-boilerplate'); host.innerHTML = '';
   (PROFILE.boilerplate || []).forEach((b) => itemCard(host, b, BOIL_FIELDS, { id_prefix: 'ans' }));
 }
-$('#p-add-exp').onclick = () => itemCard($('#p-experience'), { id_prefix: 'exp' }, EXP_FIELDS, { id_prefix: 'exp' });
-$('#p-add-edu').onclick = () => itemCard($('#p-education'), { id_prefix: 'edu' }, EDU_FIELDS, { id_prefix: 'edu' });
+$('#p-add-exp').onclick = () => { itemCard($('#p-experience'), { id_prefix: 'exp' }, EXP_FIELDS, { id_prefix: 'exp' }); bindCalendars($('#p-experience')); };
+$('#p-add-edu').onclick = () => { itemCard($('#p-education'), { id_prefix: 'edu' }, EDU_FIELDS, { id_prefix: 'edu' }); bindCalendars($('#p-education')); };
 $('#p-add-boiler').onclick = () => itemCard($('#p-boilerplate'), { id_prefix: 'ans' }, BOIL_FIELDS, { id_prefix: 'ans' });
 
 $('#p-paste-toggle').onclick = () => { $('#p-resume').focus(); toast('Type or paste below, then Save profile.', 'ok'); };
@@ -620,5 +634,6 @@ $('#s-copy').onclick = async () => {
 (async function boot() {
   await loadProfile().catch((e) => toast('profile: ' + e.message, 'err'));
   loadStatus();
+  bindCalendars(document);
   followHash();
 })();

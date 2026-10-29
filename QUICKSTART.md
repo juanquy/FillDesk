@@ -100,6 +100,12 @@ python3 tools/seed_demo.py      # demo profile + two saved jobs
   `N` leaves it to you, `A` fills the rest, `Esc` stops. After a run, **Undo what
   FillDesk typed** clears what it wrote.
 
+Date fields anywhere in the dashboard carry a **📅** button: month+year for a job,
+bare year for schooling, a full day for "earliest start". The same picker appears in
+the panel's per-field card whenever a form wants a date, and what you click gets
+re-shaped into that field's format (`06/2021`, `2021-06`, `06/05/2024`). Choose *Year
+only* when that is honestly all you know — a guessed January is worse than a year.
+
 Useful before any of it: `python3 tools/import_skills.py skills.txt` and
 `python3 tools/import_linkedin.py linkedin-export.zip --dry` (LinkedIn → Settings →
 Data privacy → *Get a copy of your data* — the official export, because logging into

@@ -14,6 +14,10 @@ import re
 import subprocess
 import sys
 import unittest
+import urllib.request
+import time
+import tempfile
+import shutil
 from pathlib import Path
 
 try:
@@ -140,6 +144,14 @@ class DashboardTests(unittest.TestCase):
     def test_assets_referenced_exist(self):
         html = (WEB / "index.html").read_text()
         for src in re.findall(r'(?:src|href)="(/[\w.\-/]+)"', html):
+            if src.startswith("/shared/"):
+                # Served from extension/ by exact name (one file, two consumers), so
+                # the file check happens there and the route has to name it.
+                name = src[len("/shared/"):]
+                self.assertTrue((EXT / name).is_file(), f"shared asset {src} has no source file")
+                self.assertIn(f'"{name}"', (ROOT / "server" / "app.py").read_text(),
+                              f"{src} is not served by a named route")
+                continue
             self.assertTrue((WEB / src.lstrip("/")).is_file(), f"dashboard references missing {src}")
         js = (WEB / "app.js").read_text()
         for endpoint in set(re.findall(r"api\(['\"`]/([\w/<>\-.]+)", js)):
@@ -155,6 +167,134 @@ class DashboardTests(unittest.TestCase):
         ids_written_by_js = set(re.findall(r'id="([\w-]+)"', js))
         missing = sorted(ids_in_js - ids_in_html - ids_written_by_js)
         self.assertFalse(missing, f"app.js binds ids that the dashboard does not define: {missing}")
+
+
+class DatePickers(unittest.TestCase):
+    """Dates are where an autofiller quietly lies, so picking one beats typing one.
+
+    One widget file serves both surfaces: the dashboard loads it over the loopback
+    API, the extension loads it as a content script. These check the wiring on both
+    sides and that nothing that used to be typed is now impossible to enter.
+    """
+
+    def setUp(self):
+        self.cal = (EXT / "datepicker.js").read_text()
+        self.content = (EXT / "content.js").read_text()
+        self.manifest = json.loads((EXT / "manifest.json").read_text())
+        self.index = (WEB / "index.html").read_text()
+        self.dash = (WEB / "app.js").read_text()
+        self.server = (ROOT / "server" / "app.py").read_text()
+
+    def has(self, haystack, needle, why):
+        self.assertTrue(needle in haystack, why)
+
+    def test_one_widget_file_serves_both_callers(self):
+        js = self.manifest["content_scripts"][0]["js"]
+        self.assertIn("datepicker.js", js, "the extension never loads the calendar")
+        self.assertLess(js.index("datepicker.js"), js.index("content.js"),
+                        "content.js needs the widget before it runs")
+        self.has(self.index, 'src="/shared/datepicker.js"', "the dashboard never loads the calendar")
+        self.has(self.server, '"/shared/"', "the route for it is missing")
+        self.has(self.server, 'if name != "datepicker.js"',
+                 "the shared-script route must list files by name, not by path")
+
+    def test_profile_date_fields_are_pickers(self):
+        for needle in ("cal: 'ym'", "cal: 'y'"):
+            self.has(self.dash, needle, "start/end years still want typing")
+        self.has(self.dash, 'data-cal="${f.cal}"', "the field renderer drops the picker marker")
+        self.has(self.dash, "function bindCalendars", "no binding helper")
+        self.has(self.dash, "bindCalendars(host)", "renders do not bind pickers")
+        self.has(self.index, 'id="p-start" placeholder="4 weeks after offer" data-cal="mdy"',
+                 "earliest start keeps its prose answer and gains a picker")
+
+    def test_the_extension_panel_can_pick_a_date_too(self):
+        for el in ("fd-revd", "fd-rdate", "fd-rdatehint"):
+            self.has(self.content, f'id="{el}"', f"{el} missing from the review card")
+        self.has(self.content, "function openDatePicker", "no picker in the panel")
+        self.has(self.content, "M.formatDate(chosen, desc)",
+                 "a picked date must be re-shaped into what this field asked for")
+        self.has(self.content, "root: mountRoot", "the picker must mount inside the panel's shadow root")
+        self.has(self.content, "date cleared", "clearing a date hands the field back to the user")
+
+    def test_the_widget_refuses_to_invent_a_day(self):
+        self.has(self.cal, "no invented day, ever" if "no invented day, ever" in self.cal
+                 else "A bare year is a valid answer", "the widget must say a year is a fine answer")
+        self.has(self.cal, "if (parts.month != null && (parts.month < 1 || parts.month > 12)) return false;",
+                 "month 13 has to be refused in code")
+        self.has(self.cal, "composedPath", "outside-click handling must survive shadow DOM retargeting")
+
+    @staticmethod
+    def _browser():
+        for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
+            found = shutil.which(name)
+            if found:
+                return found
+        return None
+
+    @unittest.skipUnless(True, "runs only when a Chromium browser is installed")
+    def test_dashboard_renders_every_picker(self):
+        """A static grep cannot see a marker that lands outside its tag — that exact
+        mistake shipped once and left 14 date fields without a button. So render the
+        page with a throwaway profile and count what the browser actually built.
+        """
+        browser = self._browser()
+        if not browser:
+            self.skipTest("no Chromium browser available")
+        tmp = Path(tempfile.mkdtemp(prefix="filldesk_render_"))
+        port = 8793
+        env = {**os.environ, "FILLDESK_DATA": str(tmp / "data"), "FILLDESK_LLM_PROVIDER": "none", "DISPLAY": ""}
+        server = subprocess.Popen([sys.executable, "-m", "server", "--port", str(port)],
+                                  cwd=str(ROOT), env=env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            base = f"http://127.0.0.1:{port}"
+            token = (tmp / "data" / "api_token")
+            for _ in range(80):
+                try:
+                    token.read_text()
+                    urllib.request.urlopen(base + "/api/status", timeout=1).read()
+                    break
+                except Exception:  # noqa: BLE001 - keep waiting for boot
+                    time.sleep(0.1)
+            else:
+                self.fail("throwaway server never came up")
+
+            # Two jobs and one degree: the fields under test are rendered from the
+            # profile, not written in the HTML.
+            req = urllib.request.Request(base + "/api/profile", method="PUT",
+                                        headers={"content-type": "application/json",
+                                                 "x-filldesk-token": token.read_text().strip()},
+                                        data=json.dumps({"experience": [
+                                            {"company": "A", "title": "B", "start": "2021-06", "end": "2023"},
+                                            {"company": "C", "title": "D", "start": "2018", "end": "Present"}],
+                                            "education": [{"school": "S", "start": "1990", "end": "1995"}]}).encode())
+            urllib.request.urlopen(req, timeout=5).read()
+
+            dom = subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-first-run",
+                                  "--user-data-dir=" + str(tmp / "profile"),
+                                  "--virtual-time-budget=6000", "--dump-dom", base + "/"],
+                                 capture_output=True, text=True, timeout=120, env=env).stdout
+            marked = len(re.findall(r'<(?:input|textarea)[^>]*data-cal=', dom))
+            buttons = dom.count('class="calbtn"')
+            self.assertGreaterEqual(marked, 5, f"expected date fields to be marked, saw {marked}")
+            self.assertEqual(marked, buttons,
+                             f"{marked} date fields rendered but {buttons} calendar buttons")
+            self.assertEqual(dom.count('data-cal="ym"'), 4, "each job has a start and an end month")
+            self.assertEqual(dom.count('data-cal="y"'), 2, "schooling is year-only")
+            self.assertIn('data-cal="mdy"', dom, "earliest start keeps a full-date picker")
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                server.kill()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_review_toggle_off_state_is_not_the_disabled_look(self):
+        off = self.content[self.content.index(".btn.off{"):][:120]
+        self.assertTrue("opacity" not in off,
+                        "a dimmed button reads as disabled; use a dashed outline instead")
+        self.has(self.content, "Ask per field ✓", "the button should show which state it is in")
 
 
 class DocsImages(unittest.TestCase):

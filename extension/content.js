@@ -508,6 +508,44 @@
     document.querySelectorAll('[data-filldesk]').forEach((el) => { el.style.outline = ''; delete el.dataset.filldesk; });
   }
 
+  const isDateField = (desc, decision) => Boolean(
+    (window.FILLDESK_CAL && (desc.dateHint || desc.type === 'month'
+      || (decision && decision.review === 'date_precision')
+      || (typeof decision?.value === 'string' && /^\d{4}(-\d{1,2})?$/.test(decision.value.trim())))));
+
+  const dateModeOf = (desc) => (desc.type === 'month' || desc.dateHint === 'my' ? 'month + year'
+    : desc.dateHint === 'y' ? 'year only' : 'full date');
+
+  /**
+   * The one place a human can fix a date by clicking instead of retyping. The value is
+   * re-shaped into whatever this particular field asked for (mm/dd/yyyy, yyyy-mm-dd,
+   * type="month"), so choosing June 2021 can never arrive as 2021-06-01 on a form that
+   * wanted 06/2021.
+   */
+  function openDatePicker(item, anchor, mountRoot) {
+    const CAL = window.FILLDESK_CAL;
+    if (!CAL || !anchor) return ui.line({ kind: 'warn', text: 'date picker unavailable' });
+    const desc = item.desc;
+    const mode = desc.type === 'month' || desc.dateHint === 'my' ? 'ym'
+      : desc.dateHint === 'y' ? 'y' : 'mdy';
+    CAL.buildPicker({
+      mode,
+      value: item.decision.value,
+      root: mountRoot,
+      onPick(chosen) {
+        if (!chosen) {
+          item.decision.action = 'skip';
+          return ui.line({ kind: 'warn', text: `${clipLabel(desc)} date cleared — that one is yours` });
+        }
+        const shaped = M.formatDate(chosen, desc) || chosen;
+        item.decision.value = shaped;
+        const shown = mountRoot.querySelector && mountRoot.querySelector('#fd-revv');
+        if (shown) shown.textContent = shaped;
+        ui.line({ kind: 'ok', text: `${clipLabel(desc)} will be filled as "${shaped}"` });
+      },
+    }).open(anchor);
+  }
+
   function setReviewEach(on) {
     state.reviewEach = !!on;
     state.reviewAll = false;
@@ -747,10 +785,16 @@
       .revl{font-weight:700;margin:2px 0}
       .revv{background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:6px;margin:5px 0 7px;
             font-size:11.5px;max-height:66px;overflow:auto;color:#cdd6e3;white-space:pre-wrap}
+      .revd{display:flex;align-items:center;gap:7px;margin:0 0 7px}
+      .revd .btn{flex:none;padding:4px 8px;font-size:11px}
+      .hintx{color:#93a0b5;font-size:10.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .revb{display:flex;gap:6px;flex-wrap:wrap}
       .revb .btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px}
-      .btn.off{opacity:.55}
-      .btn.on{background:#2b3f5c;border-color:#5b8cff}
+      /* Off has to read as "click me", not "cannot click me": a dimmed button in a
+         dark panel looks disabled, and one reviewer already read it that way. */
+      .btn.off{background:#1c232e;border:1px dashed #4a5a70;color:#c3cddd}
+      .btn.off:hover{background:#2b3f5c;border-color:#5b8cff;color:#fff}
+      .btn.on{background:#2b3f5c;border:1px solid #5b8cff;color:#fff}
       .draft{border-top:1px solid #2a3442;padding:9px 11px}
       .draft pre{margin:0 0 7px;max-height:150px;overflow:auto;white-space:pre-wrap;font:11.5px/1.5 ui-monospace,monospace;
                  background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:7px}
@@ -787,6 +831,10 @@
             <div class="revq" id="fd-revq">field 1 of 1</div>
             <div class="revl" id="fd-revl"></div>
             <div class="revv" id="fd-revv"></div>
+            <div class="revd" id="fd-revd" style="display:none">
+              <button class="btn" id="fd-rdate" type="button">Change date</button>
+              <span class="hintx" id="fd-rdatehint"></span>
+            </div>
             <div class="revb">
               <button class="btn pri" id="fd-ry">Fill (Y)</button>
               <button class="btn" id="fd-rn">Skip (N)</button>
@@ -890,6 +938,12 @@
         root.querySelector('#fd-revv').textContent = dec.action === 'upload'
           ? (dec.value === 'cover_letter' ? 'cover letter (.docx)' : 'your resume (.docx)')
           : String(dec.value || '');
+        const dateRow = root.querySelector('#fd-revd');
+        dateRow.style.display = isDateField(d, dec) ? 'flex' : 'none';
+        if (dateRow.style.display === 'flex') {
+          root.querySelector('#fd-rdatehint').textContent = `this form wants ${dateModeOf(d)} — pick it, do not type it`;
+          root.querySelector('#fd-rdate').onclick = () => openDatePicker(item, root.querySelector('#fd-rdate'), root.getRootNode());
+        }
         box.style.display = 'block';
         return new Promise((resolve) => { reviewResolve = resolve; });
       },
@@ -904,6 +958,7 @@
         const b = root.querySelector('#fd-review');
         b.classList.toggle('on', !!on);
         b.classList.toggle('off', !on);
+        b.textContent = on ? 'Ask per field ✓' : 'Ask per field ○';
       },
       showDraft(d, jobId) {
         const box = root.querySelector('#fd-draft');

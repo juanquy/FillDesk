@@ -89,6 +89,10 @@ start date, notice period, clearances, references.
 - **Imports, not re-typing.** `tools/import_skills.py` for a skills list, and
   `tools/import_linkedin.py` for your own **LinkedIn data export** (Skills, positions,
   education, About). FillDesk never logs into LinkedIn, or anything else, for you.
+- **Dates you pick, not type.** Profile start/end years and schooling get a small
+  calendar; so does each date field in the ask-per-field review card. It picks
+  month+year, or a bare year, or a full date — the shape the field asked for — and it
+  will never invent a day for a job you remember as `2021-06`.
 - **Coverage you can measure.** Every run logs fields filled / unrecognised /
   refused per host into `data/events.jsonl`, and the dashboard shows it. If a site
   keeps producing unrecognised fields, that is the real coverage answer.
