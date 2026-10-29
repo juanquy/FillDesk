@@ -131,7 +131,12 @@ class ApiTests(unittest.TestCase):
                     },
                 ],
                 "education": [{"id": "edu_1", "school": "UC Berkeley", "degree": "BS", "field": "EECS", "start": "2014", "end": "2018"}],
-                "boilerplate": [{"id": "ans_1", "label": "Why this company?", "text": "I have used the product daily for two years."}],
+                # one reusable answer plus one scoped to a named employer: the two kinds
+                # the matcher is allowed to treat differently
+                "boilerplate": [
+                    {"id": "ans_1", "label": "Why are you leaving your current role?", "text": "I want to own a platform end to end again."},
+                    {"id": "ans_2", "label": "Why this company? — Figma", "text": "I have used the product daily for two years."},
+                ],
                 "master_resume_markdown": "# Alex Rivera\n\nalex@example.com | +1 415 555 0100 | San Francisco, CA\n\n## Summary\nPM with 7+ years in growth and platform products.\n\n## Experience\n### Senior Product Manager - Figma (2021-Present)\n- Rebuilt checkout with Stripe, +23% paid conversion\n- Launched PLG onboarding from 0 to 40K MAU in 18 months\n- Led a 12-person squad across three releases\n\nProduct Manager - Dropbox (2018-2021)\n- Cut support tickets 40% with a self-serve redesign\n\n## Skills\nSQL, A/B testing, roadmapping, Python\n\n## Education\n- BS EECS, UC Berkeley (2014-2018)\n",
             },
         )
@@ -562,14 +567,18 @@ class RulesTests(unittest.TestCase):
     def test_boilerplate_matching(self):
         from server import packet as packet_mod
 
-        profile = {"boilerplate": [{"id": "1", "label": "Why this company?", "text": "Because I use it."}]}
-        best, score = packet_mod.match_boilerplate("Why this company?", profile)
+        profile = {"boilerplate": [{"id": "1", "label": "What are you looking for next?", "text": "More ownership."}]}
+        best, score = packet_mod.match_boilerplate("What are you looking for next?", profile)
         self.assertTrue(best)
         self.assertGreater(score, 0.8)
-        # reworded employer question, same intent -> still matched to the saved answer
-        best2, score2 = packet_mod.match_boilerplate("Why Linear?", profile)
-        self.assertTrue(best2, "intent matching should catch 'Why <company>?'")
-        self.assertGreater(score2, 0.6)
+        # An employer question never borrows generic prose. This assertion used to be the
+        # opposite, which is how one sentence ended up answering every motivation question
+        # at every employer, typed with confidence 0.75 and needs_input false.
+        generic = {"boilerplate": [{"id": "1", "label": "Why this company?", "text": "Because I use it."}]}
+        for q in ("Why Linear?", "Why do you want to work at Stripe?", "Why us?",
+                  "What interests you about this role?"):
+            hit, _score = packet_mod.match_boilerplate(q, generic, {"company": "Linear"})
+            self.assertIsNone(hit, f"{q} was answered with generic prose")
         best3, _ = packet_mod.match_boilerplate(
             "Tell me about a time you disagreed with an engineer.",
             {"boilerplate": [
@@ -938,6 +947,211 @@ class UnverifiedAnswersStayHome(unittest.TestCase):
         snap = self._snapshot(packet["id"])
         self.assertEqual(snap.get("version"), packet_mod.SNAPSHOT_VERSION, "the stale snapshot was served as-is")
         self.assertNotIn("stale snapshot probe", json.dumps(snap.get("answers", [])))
+
+
+class EmployerQuestionsStayPerPacket(unittest.TestCase):
+    """"Why this company?" cannot be answered before there is a company, and one generic
+    sentence under that label used to satisfy it at every employer: shared intent scored
+    0.75 on its own, and the label had no content word to anchor it because why/this/
+    company are all stop words."""
+
+    def test_a_saved_answer_is_reused_for_an_employer_only_when_it_names_them(self):
+        profile = {"boilerplate": [
+            {"id": "1", "label": "Why this company? — Stripe", "text": "Stripe made payments a developer product."},
+            {"id": "2", "label": "Why this company?", "text": "I want to ship fast with a serious team."},
+        ]}
+        hit, score = packet_mod.match_boilerplate("Why do you want to work at Stripe?", profile, {"company": "Stripe"})
+        self.assertEqual(hit["id"], "1", "the scoped answer should win")
+        self.assertGreaterEqual(score, 0.85)
+        hit2, _ = packet_mod.match_boilerplate("Why do you want to work at Linear?", profile, {"company": "Linear"})
+        self.assertIsNone(hit2, "a Stripe answer was offered to Linear")
+
+    def test_the_generic_label_is_never_a_fallback(self):
+        profile = {"boilerplate": [{"id": "2", "label": "Why this company?", "text": "Great product."}]}
+        for job in ({"company": ""}, {"company": "Anyco"}):
+            hit, score = packet_mod.match_boilerplate("Why should we hire you?", profile, job)
+            self.assertIsNone(hit, f"generic prose answered an employer question for {job}")
+
+    def test_reusable_questions_still_match_on_intent(self):
+        profile = {"boilerplate": [{"id": "1", "label": "Tell me about a challenge", "text": "The migration."}]}
+        hit, score = packet_mod.match_boilerplate("Describe a failure you learned from", profile, {"company": "Linear"})
+        self.assertTrue(hit, "the fix must not break employer-agnostic matching")
+
+    def test_seeded_prompts_are_all_answerable_before_an_employer_exists(self):
+        from server import store
+        for b in store.DEFAULT_PROFILE["boilerplate"]:
+            self.assertFalse(config.employer_specific(b["label"]),
+                             f"{b['label']} cannot be written before there is a company")
+
+    def test_employer_specific_detection(self):
+        for q in ("Why this company?", "why us?", "What interests you about our team?",
+                  "Why do you want to work at Acme?", "What do you know about us?"):
+            self.assertTrue(config.employer_specific(q), q)
+        for q in ("Why are you leaving your current role?", "Greatest weakness",
+                  "Tell me about a challenge", "What are your salary expectations?",
+                  "When could you start?"):
+            self.assertFalse(config.employer_specific(q), q)
+
+    def test_label_scoping(self):
+        self.assertEqual(config.scoped_company("Why this company? — Stripe"), "stripe")
+        self.assertEqual(config.scoped_company("Why us (Kwikel)"), "kwikel")
+        self.assertEqual(config.scoped_company("Why this company?"), "")
+        self.assertEqual(config.scoped_company("Tell me about a challenge"), "")
+
+    def test_completeness_does_not_demand_an_impossible_answer(self):
+        # A profile whose only filled answer is employer-specific still lacks the reusable
+        # kind -- but the seeded prompt must not be the thing holding the score down.
+        profile = {"boilerplate": [{"label": "Why this company?", "text": "Named them: Stripe"},
+                                   {"label": "What are you looking for next?", "text": "More ownership"}]}
+        checks = store.profile_completeness(profile)["checks"] if hasattr(store, "profile_completeness") else None
+        if checks is None:
+            self.skipTest("completeness lives behind the API in this build")
+        self.assertTrue(checks.get("reusable answers"))
+
+
+class PolishingAddsNothing(unittest.TestCase):
+    """'Rewrite this professionally' is the most useful and most dangerous button in the
+    tool: the sentence around an invented number is the candidate's own, so the invention
+    reads as theirs. The guards are a fact diff, the compliance scrubber, and the fact that
+    a rewrite lands unverified."""
+
+    ORIGINAL = "we cut cart abandonment a lot by rebuilding the checkout flow"
+
+    def setUp(self):
+        from server import polish as polish_mod
+        self.polish_mod = polish_mod
+        self._real = polish_mod.llm.complete
+        self._saved = []
+
+    def tearDown(self):
+        self.polish_mod.llm.complete = self._real
+
+    def _model(self, text):
+        self.polish_mod.llm.complete = lambda *a, **k: {"text": text}
+
+    def _packet(self):
+        _c, job = call("POST", "/api/jobs", {"title": "Infrastructure Engineer", "company": "Linear",
+                                             "description": "Runs the platform. " * 30,
+                                             "questions": ["Describe a hard production problem."]}, token=True)
+        _c, packet = call("POST", "/api/packets", {"job_id": job["id"]}, token=True)
+        answers = packet.get("answers") or []
+        answers[0].update({"answer": self.ORIGINAL, "needs_input": False, "blocked": False})
+        _c, packet = call("PUT", "/api/packets/" + packet["id"], {"answers": answers}, token=True)
+        call("POST", "/api/packets/%s/approve" % packet["id"], {"force": True}, token=True)
+        _c, packet = call("GET", "/api/packets/" + packet["id"], token=True)
+        return packet
+
+    def _snapshot(self, packet_id):
+        with urllib.request.urlopen(urllib.request.Request(BASE + "/api/autofill/snapshot?packet_id=" + packet_id),
+                                    timeout=10) as resp:
+            return json.loads(resp.read())
+
+    def test_a_clean_restyle_is_written_and_marked_unverified(self):
+        packet = self._packet()
+        self._model("I rebuilt the checkout flow, which cut cart abandonment a lot.")
+        code, res = call("POST", "/api/packets/%s/polish" % packet["id"],
+                         {"index": 0, "text": self.ORIGINAL}, token=True)
+        self.assertEqual(code, 200, res)
+        self.assertTrue(res["ok"], res.get("refused"))
+        self.assertEqual(res["answer"]["needs_input"], True, "a rewrite arrives unread by the reviewer")
+        self.assertEqual(res["answer"]["source"], "polished")
+        _c, again = call("GET", "/api/packets/" + packet["id"], token=True)
+        self.assertIn("rebuilt the checkout flow", again["answers"][0]["answer"])
+
+    def test_a_rewrite_just_polished_is_not_offered_for_typing(self):
+        packet = self._packet()
+        self._model("I rebuilt the checkout flow, which cut cart abandonment a lot.")
+        call("POST", "/api/packets/%s/polish" % packet["id"], {"index": 0, "text": self.ORIGINAL}, token=True)
+        snap = self._snapshot(packet["id"])
+        self.assertNotIn("rebuilt the checkout flow", json.dumps(snap.get("answers", [])),
+                         "unverified text was offered to the extension")
+        self.assertIn("Describe a hard production problem.", snap.get("unverified_questions", []))
+
+    def test_an_invented_number_is_refused_and_the_answer_kept(self):
+        packet = self._packet()
+        self._model("I cut cart abandonment by 31% by rebuilding the checkout flow.")
+        _c, res = call("POST", "/api/packets/%s/polish" % packet["id"],
+                       {"index": 0, "text": self.ORIGINAL}, token=True)
+        self.assertFalse(res["ok"])
+        self.assertIn("numbers", res["refused"])
+        self.assertTrue(res.get("attempt"), "the user cannot see what was refused")
+        _c, again = call("GET", "/api/packets/" + packet["id"], token=True)
+        self.assertEqual(again["answers"][0]["answer"], self.ORIGINAL, "the refusal still edited the answer")
+
+    def test_an_invented_compliance_claim_is_refused(self):
+        packet = self._packet()
+        self._model("I am authorized to work in the United States without sponsorship, "
+                    "and I cut cart abandonment by rebuilding checkout.")
+        _c, res = call("POST", "/api/packets/%s/polish" % packet["id"],
+                       {"index": 0, "text": self.ORIGINAL}, token=True)
+        self.assertFalse(res["ok"], "a polish pass smuggled in a legal-status claim")
+        self.assertIn("work_authorization", res["refused"])
+
+    def test_a_sentence_opening_adverb_is_not_a_name(self):
+        # The first live run refused an honest rewrite because the model opened with
+        # "Significantly". Word shape beats a word list here: nothing ending in -ly is a
+        # name, and invented employers do not either.
+        from server import polish as polish_mod
+        self.assertNotIn("significantly", polish_mod.names("Significantly cut restoration time."))
+        self.assertIn("stripe", polish_mod.names("Significantly cut restoration time at Stripe."))
+        packet = self._packet()
+        self._model("Significantly cut cart abandonment a lot by rebuilding the checkout flow.")
+        _c, res = call("POST", "/api/packets/%s/polish" % packet["id"],
+                       {"index": 0, "text": self.ORIGINAL}, token=True)
+        self.assertTrue(res["ok"], res.get("refused"))
+
+    def test_a_refused_compliance_question_cannot_be_polished(self):
+        _c, job = call("POST", "/api/jobs", {"title": "Any role", "company": "Anyco",
+                                             "description": "x" * 200,
+                                             "questions": ["Are you legally authorized to work in the US?"]}, token=True)
+        _c, packet = call("POST", "/api/packets", {"job_id": job["id"]}, token=True)
+        blocked = [i for i, a in enumerate(packet.get("answers") or []) if a.get("blocked")]
+        self.assertTrue(blocked, "the compliance question was not refused at build time")
+        code, res = call("POST", "/api/packets/%s/polish" % packet["id"],
+                         {"index": blocked[0], "text": "I am a US citizen."}, token=True)
+        self.assertEqual(code, 409, "a refused question was offered to the rewriter")
+
+    def test_profile_polish_writes_nothing(self):
+        self._model("I want more ownership of production systems and less ticket work.")
+        code, res = call("POST", "/api/profile/polish",
+                         {"text": "i want to own more stuff and do less ticket work"}, token=True)
+        self.assertEqual(code, 200)
+        self.assertTrue(res.get("ok"), res.get("refused"))
+        _c, profile = call("GET", "/api/profile", token=True)
+        for b in profile.get("boilerplate", []):
+            self.assertNotIn("ownership of production systems", b.get("text") or "",
+                             "the rewrite went straight into the profile without a human")
+
+
+class EditedPacketsRebuildTheirSnapshot(unittest.TestCase):
+    """'What you approved is what gets typed' stopped being true the moment anybody typed
+    in the review box: the extension reads a snapshot, and an approved packet's edits never
+    reached it."""
+
+    def test_an_edit_to_an_approved_packet_reaches_the_extension(self):
+        _c, job = call("POST", "/api/jobs", {"title": "Ops Engineer", "company": "Linear",
+                                             "description": "Runs things. " * 30,
+                                             "questions": ["What tools do you run?" ]}, token=True)
+        _c, packet = call("POST", "/api/packets", {"job_id": job["id"]}, token=True)
+        answers = packet.get("answers") or []
+        answers[0].update({"answer": "Nagios and a spreadsheet", "needs_input": False, "blocked": False})
+        call("PUT", "/api/packets/" + packet["id"], {"answers": answers}, token=True)
+        call("POST", "/api/packets/%s/approve" % packet["id"], {"force": True}, token=True)
+        with urllib.request.urlopen(urllib.request.Request(BASE + "/api/autofill/snapshot?packet_id=" + packet["id"]),
+                                    timeout=10) as resp:
+            first = json.loads(resp.read())
+        self.assertIn("Nagios", json.dumps(first["answers"]))
+
+        answers[0]["answer"] = "Graylog, Prometheus and Alertmanager"
+        call("PUT", "/api/packets/" + packet["id"], {"answers": answers}, token=True)
+        with urllib.request.urlopen(urllib.request.Request(BASE + "/api/autofill/snapshot?packet_id=" + packet["id"]),
+                                    timeout=10) as resp:
+            second = json.loads(resp.read())
+        blob = json.dumps(second["answers"])
+        self.assertIn("Graylog", blob, "the correction on screen never reached the extension")
+        self.assertNotIn("Nagios", blob, "the extension was still offered the pre-edit answer")
+        self.assertNotEqual(second["fingerprint"], first["fingerprint"],
+                            "the fingerprint did not move, so staleness cannot be detected")
 
 
 class GeneratedProseIsScrubbed(unittest.TestCase):

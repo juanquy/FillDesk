@@ -9,13 +9,54 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
 from typing import Any
 
+# Questions whose honest answer depends on which employer is asking. Generic prose saved
+# under one of these labels is filler with extra steps: it reads well and says nothing
+# about why this company, and one sentence then answers every motivation question at every
+# employer the user ever applies to.
+_EMPLOYER_SPECIFIC = re.compile(
+    r"why (this|our|the|your|that)? ?\s*(company|organisation|organization|org|team|firm)\b"
+    r"|why us\b|why should we\b|why (do you want to|would you like to|are you interested in)"
+    r"\s+(work|join|this|the|our)\b|what (interests|attracts) you about\b"
+    r"|what do you know about (us|our|this)\b|why (should we hire you|join us)\b",
+    re.I,
+)
+
+# "Why this company? — Stripe" / "Why us (Stripe)" / "Why Stripe?: " -> the scoped company.
+_LABEL_SCOPE = re.compile(r"(?:[?\-–—:(]\s*)([A-Za-z0-9&'.+ ]{2,40})\s*\)?\s*$")
+
+
+def employer_specific(text: str) -> bool:
+    """True when the answer changes with the employer, so it belongs to a packet."""
+    return bool(_EMPLOYER_SPECIFIC.search(text or ""))
+
+
+def scoped_company(label: str) -> str:
+    """The employer a saved answer was written for, from its label. '' when it is general."""
+    label = (label or "").strip()
+    if not label:
+        return ""
+    match = _LABEL_SCOPE.search(label)
+    if not match:
+        return ""
+    tail = match.group(1).strip(" .-–—:()")
+    if not tail or tail.lower() in {
+        "company", "us", "this company", "the company", "employer", "organisation", "organization",
+        "honest", "brief", "short", "long", "optional", "required", "example", "notes", "note",
+    }:
+        return ""
+    if len(tail.split()) > 4 or tail.isupper() and len(tail) > 12:
+        return ""
+    return tail.lower()
+
+
 APP_NAME = "FillDesk"
-VERSION = "0.1.9"
+VERSION = "0.2.0"
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("FILLDESK_DATA", ROOT / "data"))

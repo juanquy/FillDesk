@@ -482,6 +482,44 @@ class WaitingIsObvious(unittest.TestCase):
         self.assertIn("state.reached = i", content, "the run does not track how far it got")
 
 
+class RewriteIsOfferedSafely(unittest.TestCase):
+    """"Rewrite with AI" is the button people ask for, and the one that invents numbers
+    most quietly, so the UI has to refuse visibly and never write without a human."""
+
+    def test_both_rewrite_buttons_exist(self):
+        js = (WEB / "app.js").read_text()
+        self.assertEqual(js.count("Polish with AI"), 2, "one of the two rewrite buttons is missing")
+        self.assertIn("/polish", js, "the packet answer is not wired to the endpoint")
+        self.assertIn("/api/profile/polish", js, "the reusable answer is not wired to the endpoint")
+
+    def test_a_refusal_is_shown_not_swallowed(self):
+        js = (WEB / "app.js").read_text()
+        self.assertIn("function showRefusedRewrite", js, "a refused rewrite hides what the model wanted to say")
+        self.assertIn("showRefusedRewrite(res.attempt", js, "the refusal does not surface the attempt")
+        self.assertIn("left untouched", js, "the user is not told their answer was kept")
+
+    def test_a_polish_reports_the_reverification_it_triggered(self):
+        js = (WEB / "app.js").read_text()
+        self.assertIn("Re-tick", js, "the user is not told the rewrite needs verifying again")
+        self.assertIn("Nothing was saved yet", js, "the profile rewrite implies it was saved when it was not")
+
+    def test_employer_specific_prompts_are_explained(self):
+        js = (WEB / "app.js").read_text()
+        self.assertIn("EMPLOYER_RX", js, "nothing distinguishes an employer-specific prompt")
+        self.assertIn("drafts it per packet", js, "the user is not told where that answer belongs")
+        self.assertIn('Why this company? — Stripe', js, "the scoped-label convention is undocumented")
+
+
+class ApprovedEditsAreTyped(unittest.TestCase):
+    def test_the_server_rebuilds_a_live_packets_snapshot(self):
+        app = (ROOT / "server" / "app.py").read_text()
+        route = app[app.index('def r_packet_put'):]
+        route = route[:route.index("@route")]
+        self.assertIn("refresh_snapshot", route, "editing an approved packet leaves the extension typing old text")
+        snap = app[app.index("def r_autofill_snapshot"):][:1600]
+        self.assertIn("fingerprint", snap, "a stale snapshot cannot be detected on read")
+
+
 class UnverifiedAnswersExplained(unittest.TestCase):
     """The server withholds answers the human never confirmed. If the extension then says
     "unrecognised", the user hunts for a matching bug instead of ticking the box."""

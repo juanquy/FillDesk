@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.0 — rewrite with AI, and three ways an answer used to be wrong
+
+**Polish with AI** on every answer field: you write the honest clumsy sentence, the model
+restates it. Prose only. A rewrite is diffed against everything the candidate has already
+stated, and refused outright if it introduces a number (`31%`), an employer, a tool, or a
+legal-status claim — the refused text is shown so the wording can still be taken and fixed
+by hand. Rewrites land unverified, so the existing gate means nothing types until the box
+is ticked again. Profile rewrites are only placed in the box; saving stays a human act.
+
+Three defects in how answers reached a form:
+
+- **Generic prose answered every motivation question.** "Why this company?" contributed no
+  content words (why/this/company are all stop words), so shared intent was the only signal
+  and it fired at 0.75 — one saved sentence answered *"Why do you want to work at Stripe?"*,
+  *"Why us?"* and *"What interests you about this role?"* with `needs_input: false`. Now an
+  employer-specific question reuses a saved answer only when it names that employer or its
+  label is scoped (`Why this company? — Stripe`), and bare intent cannot carry a match on a
+  label with no topic word.
+- **The seeded prompt asked for the impossible.** "Why this company?" is unanswerable before
+  there is a company, so it sat empty and showed as a missing answer forever. Replaced with
+  a genuinely reusable prompt, the placeholder was changed to match, and the completeness
+  check now counts employer-agnostic answers only. The dashboard explains where that answer
+  actually belongs.
+- **Editing an approved packet did nothing.** The extension reads a snapshot taken at build
+  time, so a correction typed into the review box reached the file and never the form.
+  Packets now carry a fingerprint of everything typable; a mismatch rebuilds the snapshot on
+  read, and an edit to an approved packet refreshes it immediately.
+
 ## 0.1.9 — a run waiting on you looks like it is waiting
 Ask-per-field stops before typing and waits for a decision. The panel gave no sign: the
 button that a moment ago said **Fill application** now said **Filling… (click to stop)** in

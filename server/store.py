@@ -144,7 +144,10 @@ DEFAULT_PROFILE: dict[str, Any] = {
     ],
     "boilerplate": [
         # Reusable canned answers -- the highest-leverage thing you can invest 20 minutes in.
-        {"id": "ans_1", "label": "Why this company?", "text": ""},
+        # Every entry here has to be answerable before there is an employer. "Why this
+        # company?" used to be seeded and could not be, so it sat empty forever and showed
+        # up as a missing answer; that question is drafted per packet from the posting.
+        {"id": "ans_1", "label": "What are you looking for in your next role?", "text": ""},
         {"id": "ans_2", "label": "Tell me about a challenge", "text": ""},
         {"id": "ans_3", "label": "Why are you leaving?", "text": ""},
         {"id": "ans_4", "label": "Greatest weakness", "text": ""},
@@ -307,7 +310,12 @@ def profile_completeness(profile: dict) -> dict:
         "experience": any((e.get("company") or "").strip() for e in profile.get("experience", []) if isinstance(e, dict)),
         "skills": bool(profile.get("skills")),
         "summary": bool((profile.get("summary") or "").strip()),
-        "boilerplate answers": any((b.get("text") or "").strip() for b in profile.get("boilerplate", []) if isinstance(b, dict)),
+        # Only employer-agnostic answers count: "why this company?" cannot be answered
+        # before there is a company, and demanding it left people stuck on the gap list.
+        "reusable answers": any(
+            (b.get("text") or "").strip() and not config.employer_specific(b.get("label") or "")
+            for b in profile.get("boilerplate", []) if isinstance(b, dict)
+        ),
         "links": any((profile.get("links") or {}).values()),
     }
     done = sum(1 for v in checks.values() if v)

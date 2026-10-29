@@ -365,7 +365,7 @@ def content_words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z]{4,}", (text or "").lower()) if w not in _BOILER_STOP}
 
 
-def match_boilerplate(question: str, profile: dict) -> tuple[dict | None, float]:
+def match_boilerplate(question: str, profile: dict, job: dict | None = None) -> tuple[dict | None, float]:
     """Pick the saved answer that genuinely belongs to this question.
 
     String similarity alone is dangerous: "What is your salary expectation?" and
@@ -376,16 +376,35 @@ def match_boilerplate(question: str, profile: dict) -> tuple[dict | None, float]
     q = (question or "").lower()
     q_intent = intent(question)
     q_words = content_words(question)
+    company = ((job or {}).get("company") or "").strip().lower()
     best, score = None, 0.0
+    wants_employer = config.employer_specific(question)
     for b in profile.get("boilerplate", []):
         if not isinstance(b, dict) or not (b.get("text") or "").strip():
             continue
         label = (b.get("label") or "").lower()
+        text = (b.get("text") or "")
+
+        if wants_employer:
+            # Reusing generic prose here is the failure this whole path exists to avoid.
+            # It is allowed only when the saved answer was written for this employer: its
+            # text names them, or its label is scoped ("Why this company? - Stripe").
+            scoped = config.scoped_company(b.get("label") or "")
+            if company and scoped and (scoped in company or company in scoped):
+                return b, 0.9
+            if company and company in text.lower():
+                return b, 0.85
+            continue
+
         l_words = content_words(label)
         shared = q_words & l_words
         ratio = difflib.SequenceMatcher(None, q, label).ratio()
         s = 0.0
-        if q_intent and q_intent == intent(label):
+        # Shared intent carries a match only when the label has a topic word to hang it
+        # on. "Why this company?" has none -- why, this and company are all stop words --
+        # so intent was the only signal, and it fired at 0.75 for every motivation
+        # question in existence.
+        if q_intent and q_intent == intent(label) and (l_words or shared or ratio >= 0.55):
             s = 0.75
         if shared:
             s = max(s, min(0.8, 0.4 + 0.15 * len(shared)))
@@ -401,7 +420,7 @@ def draft_answer_with_rules(question: str, profile: dict, job: dict, keywords: l
     if blocked:
         return {"answer": BLOCKED_ANSWER, "source": "blocked", "confidence": 0.0, "needs_input": True, "blocked": True, **blocked}
 
-    boiler, score = match_boilerplate(question, profile)
+    boiler, score = match_boilerplate(question, profile, job)
     review = sensitive.review_reason(question)
     if boiler and score >= 0.45:
         ans = boiler["text"].strip()
@@ -764,8 +783,61 @@ def _norm_key(text: str) -> str:
 
 
 SNAPSHOT_VERSION = 3  # bump when the rules for "may be typed" change; see r_autofill_snapshot
+
+def snapshot_fingerprint(packet: dict) -> str:
+    """A digest of everything the extension is allowed to type.
+
+    A packet edited after approval used to keep the snapshot taken when it was built, so
+    the dashboard showed the corrected answer while the extension typed the old one -
+    silently, because "what you approved is what gets typed" had stopped being true the
+    moment anybody typed in the review box. Anything that writes a packet can be detected
+    by comparing this against the stored snapshot.
+    """
+    import hashlib
+    import json as _json
+
+    typed = [
+        {
+            "q": a.get("question", ""),
+            "a": a.get("answer", ""),
+            "u": bool(a.get("needs_input")),
+            "b": bool(a.get("blocked")),
+        }
+        for a in (packet.get("answers") or [])
+    ]
+    blob = _json.dumps(
+        {
+            "answers": sorted(typed, key=lambda x: x["q"]),
+            "resume": (packet.get("resume") or {}).get("markdown", ""),
+            "cover": (packet.get("cover_letter") or {}).get("text", ""),
+            "profile_updated": (packet.get("profile_snapshot") or {}).get("profile_updated_at", ""),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 NEEDS_INPUT_MARK = "[needs input]"  # withheld on the flag AND in the text: a ticked box with
                               # placeholder prose inside is still a hole in the review
+
+
+def polish_evidence(profile: dict, packet: dict | None = None) -> str:
+    """Everything the candidate has already put in writing.
+
+    A polish pass may reuse any of it and add nothing outside it, which is what makes
+    "rewrite this professionally" safe: the universe of allowed facts is the candidate's
+    own record, not the model's imagination of a plausible career.
+    """
+    parts = [
+        profile.get("master_resume_markdown", "") or "",
+        profile.get("summary", "") or "",
+        ", ".join(str(x) for x in (profile.get("skills") or [])[:400]),
+        ", ".join(str(x) for x in (profile.get("certifications") or [])[:60]),
+        " ".join(str(b.get("text", "")) for b in (profile.get("boilerplate") or []) if isinstance(b, dict)),
+    ]
+    if packet:
+        parts.append(str((packet.get("resume") or {}).get("markdown", "")))
+        parts.append(str((packet.get("cover_letter") or {}).get("text", "")))
+        parts.append(" ".join(str(a.get("answer", "")) for a in (packet.get("answers") or [])))
+    return "\n".join(part for part in parts if part and part.strip())
 
 
 def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
@@ -815,6 +887,7 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
     edu = [e for e in profile.get("education", []) if isinstance(e, dict) and (e.get("school") or e.get("degree"))]
     return {
         "version": SNAPSHOT_VERSION,
+        "fingerprint": snapshot_fingerprint(packet),
         "unverified_questions": unverified,
         "packet_id": packet["id"],
         "generated_at": store.now(),

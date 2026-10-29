@@ -204,7 +204,9 @@ const EDU_FIELDS = [
   { key: 'notes', label: 'Notes (honours, thesis)' },
 ];
 const BOIL_FIELDS = [
-  { key: 'label', label: 'Question this answers', ph: 'Why this company?' },
+  // The example has to be answerable before an employer exists; it used to suggest
+  // "Why this company?", the one prompt that cannot be written in advance.
+  { key: 'label', label: 'Question this answers', ph: 'Why are you leaving your current role?' },
   { key: 'text', label: 'Your answer', multiline: true, ph: 'Write the real thing. Packets reuse it instead of inventing filler.' },
 ];
 
@@ -220,11 +222,67 @@ function renderEducation() {
 }
 function renderBoilerplate() {
   const host = $('#p-boilerplate'); host.innerHTML = '';
-  (PROFILE.boilerplate || []).forEach((b) => itemCard(host, b, BOIL_FIELDS, { id_prefix: 'ans' }));
+  (PROFILE.boilerplate || []).forEach((b) => decorateAnswerCard(itemCard(host, b, BOIL_FIELDS, { id_prefix: 'ans' })));
+}
+
+// Employer-specific prompts ("why this company?") cannot be answered before there is an
+// employer, and generic prose under such a label used to be typed into every motivation
+// question at every company. Say what belongs there instead.
+const EMPLOYER_RX = /why (this|our|the|your)? ?\s*(company|team|organi[sz]ation|org|firm)|why us|why should we|why do you want to work|what (interests|attracts) you about|what do you know about us/i;
+
+function decorateAnswerCard(card) {
+  if (!card) return card;
+  const label = card.querySelector('input[data-k="label"]');
+  const ta = card.querySelector('textarea[data-k="text"]');
+  if (!ta) return card;
+
+  const note = document.createElement('div');
+  note.className = 'note';
+  note.style.cssText = 'margin-top:6px;color:#f0c48a;font-size:11.5px;display:none';
+  const fields = card.querySelector('.fields') || card;
+  fields.appendChild(note);
+
+  const row = document.createElement('div');
+  row.className = 'row inline';
+  row.style.marginTop = '6px';
+  row.innerHTML = `<button class="ghost" type="button">Polish with AI</button>
+    <span class="muted" style="font-size:11.5px">restates your words — adds no numbers, no employers, no claims</span>`;
+  fields.appendChild(row);
+
+  const refresh = () => {
+    const employer = EMPLOYER_RX.test(label && label.value ? label.value : '');
+    note.style.display = employer ? 'block' : 'none';
+    note.textContent = employer
+      ? 'This answer changes with every employer. FillDesk drafts it per packet from the posting and will not reuse generic text here — answer it in the packet review, or scope the label ("Why this company? — Stripe") to reuse it at that one company.'
+      : '';
+  };
+  if (label) label.addEventListener('input', refresh);
+  refresh();
+
+  const btn = row.querySelector('button');
+  btn.onclick = async () => {
+    const text = ta.value.trim();
+    if (text.length < 24) return toast('Write a sentence or two first — there is nothing to rewrite yet.', 'warn');
+    const was = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Rewriting…';
+    try {
+      const res = await api('/api/profile/polish', { method: 'POST', json: { text } });
+      if (!res.ok) {
+        toast(res.refused || 'the rewrite was refused', 'err');
+        if (res.attempt) showRefusedRewrite(res.attempt, res.refused);
+        return;
+      }
+      ta.value = res.text;
+      toast('Rewritten in place — read it, then Save profile. Nothing was saved yet.', 'ok');
+      if (res.note) toast(res.note, 'warn');
+    } catch (e) { toast(e.message, 'err'); }
+    finally { btn.disabled = false; btn.textContent = was; }
+  };
+  return card;
 }
 $('#p-add-exp').onclick = () => { itemCard($('#p-experience'), { id_prefix: 'exp' }, EXP_FIELDS, { id_prefix: 'exp' }); bindCalendars($('#p-experience')); };
 $('#p-add-edu').onclick = () => { itemCard($('#p-education'), { id_prefix: 'edu' }, EDU_FIELDS, { id_prefix: 'edu' }); bindCalendars($('#p-education')); };
-$('#p-add-boiler').onclick = () => itemCard($('#p-boilerplate'), { id_prefix: 'ans' }, BOIL_FIELDS, { id_prefix: 'ans' });
+$('#p-add-boiler').onclick = () => decorateAnswerCard(itemCard($('#p-boilerplate'), { id_prefix: 'ans' }, BOIL_FIELDS, { id_prefix: 'ans' }));
 
 // Test hook: #selftest-align writes the left edge of every control in a labelled card
 // into the DOM, so "the boxes line up" is an assertion instead of a screenshot two
@@ -558,9 +616,44 @@ function renderAnswers() {
         : `<textarea rows="4" data-i="${i}">${esc(a.answer)}</textarea>`}
       ${a.note ? `<div class="note">${esc(a.note)}</div>` : ''}
       ${!a.blocked ? `<div class="note">source: ${esc(a.source)} · confidence ${Math.round((a.confidence || 0) * 100)}%
-        <label class="check" style="display:inline-flex;margin-left:10px"><input type="checkbox" data-done="${i}" ${a.needs_input ? '' : 'checked'}> I have verified this</label></div>` : ''}`;
+        <label class="check" style="display:inline-flex;margin-left:10px"><input type="checkbox" data-done="${i}" ${a.needs_input ? '' : 'checked'}> I have verified this</label>
+        <button class="ghost pol" type="button" data-polish="${i}" title="restate your own words professionally; adds no facts">Polish with AI</button></div>` : ''}`;
     host.appendChild(el);
   });
+  host.querySelectorAll('[data-polish]').forEach((btn) => {
+    btn.onclick = async () => {
+      const i = Number(btn.dataset.polish);
+      const ta = host.querySelector(`textarea[data-i="${i}"]`);
+      if (!ta) return;
+      const text = ta.value.trim();
+      if (text.length < 24) return toast('Write a sentence or two first — there is nothing to rewrite yet.', 'warn');
+      const was = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Rewriting…';
+      try {
+        const res = await api(`/api/packets/${CURRENT.id}/polish`, { method: 'POST', json: { index: i, text } });
+        if (!res.ok) {
+          toast(res.refused || 'the rewrite was refused', 'err');
+          if (res.attempt) showRefusedRewrite(res.attempt, res.refused);
+          return;
+        }
+        CURRENT = res.packet;
+        renderAnswers();
+        toast('Rewritten from your own words. Re-tick "I have verified this" before it can be typed.', 'ok');
+        if (res.note) toast(res.note, 'warn');
+      } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; btn.textContent = was; }
+    };
+  });
+}
+
+// A refusal is informative, so it is shown: the user may still want the wording, now that
+// they can see the number or employer the model invented.
+function showRefusedRewrite(attempt, reason) {
+  modal('The rewrite was refused', `
+    <div class="badge bad" style="margin-bottom:10px">${esc(reason || 'it added facts')}</div>
+    <div class="muted" style="margin-bottom:8px">This is what it wanted to say. Your answer below is left untouched —
+    if the wording is fine apart from the invented part, take it and fix that yourself.</div>
+    <pre style="white-space:pre-wrap;font-size:12.5px;line-height:1.5">${esc(attempt)}</pre>`);
 }
 
 function collectAnswers() {

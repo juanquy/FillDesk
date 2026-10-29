@@ -101,6 +101,19 @@ start date, notice period, clearances, references.
 
 ---
 
+### Rewrite what you wrote, without adding to it
+
+Every answer field has **Polish with AI**: you write the honest clumsy sentence, the
+model restates it professionally. It is a style-only operation and the rewrite is
+diffed against everything you have already put in writing, so a rewrite that
+introduces a figure, an employer, a tool or a legal-status claim is **refused** and
+your words are kept — with the refused version shown, so you can take the wording and
+fix the invented part yourself.
+
+A rewrite always lands as *unverified*, which means the extension cannot type it until
+you read it and tick the box again. On the profile tab, the rewrite is only placed in
+the box: saving stays your decision.
+
 ## Install
 
 Requirements: Python 3.10+ and Chrome (or any Chromium browser). No pip packages,

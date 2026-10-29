@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import config, llm, packet as packet_mod, resume_export, resume_parse, sensitive, store
+from . import polish
 
 Handler = Callable[["Api"], dict]
 
@@ -362,7 +363,75 @@ def r_packet_put(api: Api, packet_id: str):
         (p.get("resume", {}).get("markdown", "") + "\n" + p.get("cover_letter", {}).get("text", "") + "\n" + "\n".join(a.get("answer", "") for a in p.get("answers", [])))
     )[:40]
     store.save_packet(p)
+    if p.get("approved"):
+        # Editing a packet that is already live: the extension reads a snapshot, not the
+        # packet, so without this the correction on screen never reaches a form.
+        refreshed = packet_mod.refresh_snapshot(packet_id)
+        if refreshed:
+            p = refreshed
     return ok(p)
+
+
+@route("POST", "/api/packets/<packet_id>/polish")
+def r_packet_polish(api: Api, packet_id: str):
+    """Restyle one answer the candidate wrote. Prose only: no facts, and it lands
+    unverified, so nothing reaches a form until the box is ticked again."""
+    p = store.get_packet(packet_id)
+    if not p:
+        return fail("not found", 404)
+    body = api.json() or {}
+    try:
+        idx = int(body.get("index"))
+    except (TypeError, ValueError):
+        return fail("index required", 400)
+    answers = p.get("answers") or []
+    if idx < 0 or idx >= len(answers):
+        return fail("no such answer", 404)
+    target = answers[idx]
+    if target.get("blocked"):
+        return fail("that question is refused for compliance -- only you may answer it", 409)
+    text = (body.get("text") or target.get("answer") or "").strip()
+    if len(text) < 24:
+        return fail("write a sentence or two first -- there is nothing to rewrite yet", 400)
+    job = store.get_job(p.get("job_id") or "") or {}
+    context = " ".join(x for x in (job.get("title", ""), ("at " + job["company"]) if job.get("company") else "") if x)
+    result = polish.polish(text, evidence=packet_mod.polish_evidence(store.load_profile(), p),
+                           context=context, settings=config.load_settings())
+    if not result.get("ok"):
+        return ok({
+            "ok": False,
+            "refused": result.get("refused", "the rewrite was refused"),
+            "attempt": result.get("attempt", ""),
+            "added_numbers": result.get("added_numbers", []),
+            "added_names": result.get("added_names", []),
+        })
+    target["answer"] = result["text"]
+    target["needs_input"] = True   # rewritten means unread: the gate is the checkbox
+    target["source"] = "polished"
+    target["note"] = ("Rewritten from your own words with no facts added. Re-read it and "
+                      "tick verified before the extension may type it.")
+    p["answers"] = answers
+    store.save_packet(p)
+    refreshed = packet_mod.refresh_snapshot(packet_id) or p
+    return ok({"ok": True, "answer": target, "packet": refreshed,
+               "words_before": result.get("words_before"), "words_after": result.get("words_after"),
+               "note": result.get("note", "")})
+
+
+@route("POST", "/api/profile/polish")
+def r_profile_polish(api: Api):
+    """The same rewrite for a reusable answer. Nothing is written: the text lands in the
+    box and Save stays a human act, because the profile has no per-answer gate."""
+    body = api.json() or {}
+    text = (body.get("text") or "").strip()
+    if len(text) < 24:
+        return fail("write a sentence or two first -- there is nothing to rewrite yet", 400)
+    result = polish.polish(text, evidence=packet_mod.polish_evidence(store.load_profile()),
+                           context="", settings=config.load_settings())
+    if not result.get("ok"):
+        return ok({"ok": False, "refused": result.get("refused", "the rewrite was refused"),
+                   "attempt": result.get("attempt", "")})
+    return ok(result)
 
 
 @route("POST", "/api/packets/<packet_id>/approve")
@@ -453,7 +522,8 @@ def r_autofill_snapshot(api: Api):
     # A safety rule about what may be typed has to reach packets approved before the rule
     # existed, or the fix only protects new work. Snapshots are versioned, and a stale one
     # is rebuilt from the packet on the way out.
-    if snap.get("version") != packet_mod.SNAPSHOT_VERSION:
+    if (snap.get("version") != packet_mod.SNAPSHOT_VERSION
+            or snap.get("fingerprint") != packet_mod.snapshot_fingerprint(p)):
         refreshed = packet_mod.refresh_snapshot(p["id"])
         if refreshed:
             snap = dict(refreshed.get("profile_snapshot") or {})
