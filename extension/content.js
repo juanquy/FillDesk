@@ -763,6 +763,9 @@
   // ---------------------------------------------------------------- panel UI
   const ui = (function buildPanel() {
     let root, logEl, progEl, headEl, mounted = false, reviewResolve = null;
+    // 'running' has to be declared: the file runs in strict mode, so the old bare
+    // assignment in setRunning() threw ReferenceError before a single field was typed.
+    let running = false;
     const host = document.createElement('div');
     host.setAttribute('data-filldesk-panel', '');
     host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;right:18px;bottom:18px;font-family:system-ui,sans-serif;';

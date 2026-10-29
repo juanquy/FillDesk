@@ -326,6 +326,69 @@ class RefusedQuestionGuidance(unittest.TestCase):
                       "the amber block must repeat the hard refusal")
 
 
+class StrictModeSafety(unittest.TestCase):
+    """Every browser file runs under 'use strict', so assigning to a name that was never
+    declared is a ReferenceError that kills the whole action — and nothing in a headless
+    test would ever see it.
+
+    `running = on` inside setRunning() did exactly that: the Fill button threw before it
+    typed a single field, and the error only appeared in chrome://extensions. This audit
+    is the cheapest net that catches that class of bug without a browser.
+    """
+
+    GLOBALS = {"window", "document", "location", "chrome", "navigator", "localStorage",
+               "console", "module", "exports", "self", "globalThis", "history",
+               "performance", "status", "name", "length"}
+
+    def _declared(self, src):
+        names = set()
+        for m in re.finditer(r"\b(?:let|var|const)\s+([^;\n]*)", src):
+            for part in m.group(1).split(","):
+                part = part.split("=")[0].strip().strip("{}[]")
+                if re.match(r"^[A-Za-z_$][\w$]*$", part):
+                    names.add(part)
+        for m in re.finditer(r"function\s*[\w$]*\s*\(([^)]*)\)", src):
+            for part in re.split(r"[,{]", m.group(1)):
+                part = part.split("=")[0].strip()
+                if re.match(r"^[A-Za-z_$][\w$]*$", part):
+                    names.add(part)
+        for m in re.finditer(r"=>\s*([\w$]+)\b", src):
+            names.add(m.group(1))
+        for m in re.finditer(r"\bcatch\s*\(\s*([\w$]+)", src):
+            names.add(m.group(1))
+        for m in re.finditer(r"\bfunction\s+([\w$]+)", src):
+            names.add(m.group(1))
+        for m in re.finditer(r"\bconst\s*\{([^}]*)\}", src):
+            for part in m.group(1).split(","):
+                part = part.split(":")[0].strip()
+                if re.match(r"^[A-Za-z_$][\w$]*$", part):
+                    names.add(part)
+        return names
+
+    def test_no_undeclared_assignments_in_browser_code(self):
+        assign = re.compile(r"^\s*([a-zA-Z_$][\w$]*)\s*=(?!=)", re.M)
+        offenders = []
+        for path in sorted(EXT.glob("*.js")) + [WEB / "app.js"]:
+            src = path.read_text()
+            if path.parent == EXT:
+                self.assertIn("'use strict'", src,
+                              f"{path.name} lost its strict-mode marker (which would hide "
+                              "undeclared assignments instead of failing loudly)")
+            declared = self._declared(src)
+            for name in sorted(set(assign.findall(src))):
+                if name not in declared and name not in self.GLOBALS:
+                    offenders.append(f"{path.name}: {name}")
+        self.assertFalse(offenders,
+                         "assigned without declaring (ReferenceError in strict mode): " + ", ".join(offenders))
+
+    def test_the_fill_button_state_variable_is_declared(self):
+        content = (EXT / "content.js").read_text()
+        self.assertIn("let running", content, "setRunning() needs a declared flag")
+        self.assertLess(content.index("let running"), content.index("function setRunning")
+                        if "function setRunning" in content else content.index("setRunning(on)"),
+                        "declared before use")
+
+
 class DocsImages(unittest.TestCase):
     """Docs that link to a missing image are worse than docs with no images."""
 
