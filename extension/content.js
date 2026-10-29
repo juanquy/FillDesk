@@ -604,6 +604,35 @@
     ui.line({ kind: n ? 'ok' : 'warn', text: n ? `cleared ${n} field(s) FillDesk typed` : 'nothing to undo' });
   }
 
+  // ---------------------------------------------------------------- error reporting
+  // An extension error used to be visible only on chrome://extensions, where a stale
+  // entry then haunted a fixed build for days while the snippet pointed at a line that
+  // could not throw. Anything that fails inside our own script now says so in the panel
+  // the user is actually looking at. Errors raised by the page itself are ignored —
+  // the ATS site's broken JavaScript is not ours to report.
+  let reported = 0;
+  function reportError(where, detail) {
+    try { console.error(`[FillDesk] ${where}`, detail); } catch (e) { /* console blocked */ }
+    if (reported < 3 && ui.isMounted()) {
+      reported++;
+      ui.line({ kind: 'bad', text: `${where}: ${String(detail || 'unknown error').slice(0, 150)}` });
+    }
+  }
+
+  const isOurs = (file) => /content\.js(\?|$)/.test(String(file || '')) || /FillDesk/.test(String(file || ''));
+
+  window.addEventListener('error', (e) => {
+    if (!isOurs(e && e.filename)) return;
+    reportError('extension error', (e && e.message) || 'script failed to load');
+  });
+
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    const text = String((r && r.stack) || (r && r.message) || r || '');
+    if (!isOurs(text) && !isOurs(r && r.fileName)) return;
+    reportError('extension error', text.split('\n')[0]);
+  });
+
   document.addEventListener('keydown', (e) => {
     if (!ui.reviewOpen()) return;
     const t = e.target;
@@ -1080,6 +1109,7 @@
           default: respond({ ok: false, error: 'unknown message' });
         }
       } catch (e) {
+        reportError('message handler', e && e.message);
         respond({ ok: false, error: String(e && e.message || e) });
       }
     })();

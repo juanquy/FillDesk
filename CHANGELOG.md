@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5 — extension errors appear in the panel
+A failure used to be visible only on `chrome://extensions`, which you have to navigate to
+and which keeps old entries: one 0.1.0 `ReferenceError` sat there for days, its snippet
+re-rendered against a file where that line is markup, while the build in use was fine.
+Errors thrown by our own script — and rejections from a rejected fill — now print in the
+panel log, capped at three so a hostile page cannot flood it. The host page's own errors
+stay the host page's problem.
+
 ## 0.1.4 — the origin guard is path-scoped
 0.1.3 compared only origins, and the sample form at `/preview.html` is served from the
 dashboard's own origin, so the panel vanished from the one page the docs tell you to open

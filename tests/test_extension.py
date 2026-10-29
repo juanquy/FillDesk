@@ -353,6 +353,26 @@ class OwnOriginIsExcluded(unittest.TestCase):
                       "a fill driven from the popup must be refused on our own origin")
 
 
+class ErrorsReachTheUser(unittest.TestCase):
+    """chrome://extensions is the wrong place to discover a failure: it is a page you
+    have to navigate to, and it keeps old entries, so a fixed build can still look
+    broken there. Anything that fails inside our own script must appear in the panel."""
+
+    def test_the_panel_reports_its_own_failures(self):
+        content = (EXT / "content.js").read_text()
+        self.assertIn("function reportError", content, "no error funnel")
+        self.assertIn("ui.line({ kind: 'bad'", content[content.index("function reportError"):],
+                      "a failure must be written into the log the user can see")
+        self.assertIn("window.addEventListener('error'", content, "no window error trap")
+        self.assertIn("window.addEventListener('unhandledrejection'", content, "no rejection trap")
+        self.assertIn("isOurs", content, "the trap must ignore the host page's own errors")
+        trap = content[content.index("window.addEventListener('error'"):]
+        self.assertIn("isOurs", trap[:260], "the error trap reports errors it did not cause")
+        handler = content[content.index("chrome.runtime.onMessage.addListener"):]
+        self.assertIn("reportError('message handler'", handler, "a rejected fill reports nowhere")
+        self.assertIn("reported < 3", content, "a throwing page must not flood the log")
+
+
 class BuildStamp(unittest.TestCase):
     """A stale content script and a fixed one look identical, and Chrome's error list
     keeps old entries. The build number has to be visible where the user looks."""

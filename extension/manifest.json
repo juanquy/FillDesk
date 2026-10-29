@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FillDesk — Job Application Filler",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Build a tailored application packet on your own machine, then autofill job applications. Review-first: it never submits, and never answers compliance or protected-class questions.",
   "permissions": ["storage", "scripting", "commands", "notifications"],
   "host_permissions": [
