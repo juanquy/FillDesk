@@ -41,6 +41,50 @@ def _read_json(path: Path, default: Any = None) -> Any:
         return default
 
 
+KEEP_BACKUPS = 40
+PROFILE_BACKUP_COOLDOWN = 600  # seconds; the dashboard saves on every edit
+
+
+def _backup(path: Path, why: str = "replace", min_gap: int = 0):
+    # Copy a record out before it is overwritten or deleted. A packet is minutes of
+    # model calls plus manual review; a saved posting is a URL that may not exist next
+    # week. Replacing either in silence is data loss, and it happened here: a throwaway
+    # test wiped the jobs and packets directories and nothing was recoverable, because
+    # only the profile had ever been copied anywhere.
+    if not path.exists():
+        return None
+    config.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    family = sorted(config.BACKUP_DIR.glob(path.stem + "-*.json"), reverse=True)
+    if min_gap and family and (datetime.now(timezone.utc).timestamp() - family[0].stat().st_mtime) < min_gap:
+        return None  # a fresh copy already exists
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    # stamp before reason: recoverable_backups() sorts by name, and a name that leads
+    # with "deleted" vs "replace" orders by reason instead of by time.
+    target = config.BACKUP_DIR / f"{path.stem}-{stamp}-{why}.json"
+    target.write_bytes(path.read_bytes())
+    for stale in sorted(config.BACKUP_DIR.glob(path.stem + "-*.json"), reverse=True)[KEEP_BACKUPS:]:
+        stale.unlink(missing_ok=True)
+    return target
+
+
+def recoverable_backups(stem: str):
+    # Backups for one record, newest first: what "undo that delete" can restore.
+    if not config.BACKUP_DIR.exists():
+        return []
+    return sorted(config.BACKUP_DIR.glob(stem + "-*.json"), reverse=True)
+
+
+def restore_backup(backup_path, kind: str) -> bool:
+    # Put a backed-up record back where it belongs. kind is "job" or "packet".
+    data = _read_json(Path(backup_path))
+    if not data or not data.get("id"):
+        return False
+    dest = (config.JOBS_DIR if kind == "job" else config.PACKETS_DIR) / f"{data['id']}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(dest, data)
+    return True
+
+
 def _write_json(path: Path, payload: Any) -> None:
     config.ensure_dirs()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,6 +176,7 @@ def save_profile(patch: dict) -> dict:
     for k, v in (patch or {}).items():
         profile[k] = v
     profile["updated_at"] = now()
+    _backup(config.PROFILE_FILE, "replace", min_gap=PROFILE_BACKUP_COOLDOWN)
     _write_json(config.PROFILE_FILE, profile)
     return profile
 
@@ -295,7 +340,9 @@ def save_job(job: dict) -> dict:
         # A cover-letter draft is not a packet: nothing here is ever autofilled.
         "draft_cover": job.get("draft_cover") or None,
     }
-    _write_json(config.JOBS_DIR / f"{job_id}.json", record)
+    target = config.JOBS_DIR / f"{job_id}.json"
+    _backup(target, "replace")
+    _write_json(target, record)
     return record
 
 
@@ -317,6 +364,7 @@ def get_job(job_id: str) -> dict | None:
 def delete_job(job_id: str) -> bool:
     p = config.JOBS_DIR / f"{job_id}.json"
     if p.exists():
+        _backup(p, "deleted")
         p.unlink()
         return True
     return False
@@ -329,7 +377,9 @@ def save_packet(packet: dict) -> dict:
     config.ensure_dirs()
     packet["updated_at"] = now()
     packet.setdefault("created_at", now())
-    _write_json(config.PACKETS_DIR / f"{packet['id']}.json", packet)
+    target = config.PACKETS_DIR / f"{packet['id']}.json"
+    _backup(target, "replace")
+    _write_json(target, packet)
     return packet
 
 
@@ -364,6 +414,7 @@ def get_packet(packet_id: str) -> dict | None:
 def delete_packet(packet_id: str) -> bool:
     p = config.PACKETS_DIR / f"{packet_id}.json"
     if p.exists():
+        _backup(p, "deleted")
         p.unlink()
         return True
     return False

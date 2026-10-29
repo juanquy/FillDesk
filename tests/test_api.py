@@ -24,7 +24,7 @@ import sys  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import app as app_mod  # noqa: E402
-from server import config  # noqa: E402
+from server import config, store  # noqa: E402
 
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
@@ -822,6 +822,53 @@ class FreshAssets(unittest.TestCase):
         self.assertIn("no-store", headers.get("Cache-Control", "").lower())
         status, _ = self._head("/nope.css")
         self.assertEqual(status, 404, "HEAD of a missing file must not claim success")
+
+
+class RecoverableRecords(unittest.TestCase):
+    """A packet is minutes of model calls plus a human reading every answer; a saved
+    posting is a URL that may not exist next week. A throwaway test once wiped
+    data/jobs and data/packets and nothing was recoverable, because only the profile had
+    ever been copied anywhere. Every replace and delete keeps a copy now."""
+
+    def test_deleting_a_job_leaves_a_restorable_copy(self):
+        job = store.save_job({"title": "Network Engineer", "company": "Initech"})
+        self.assertTrue(store.delete_job(job["id"]))
+        self.assertIsNone(store.get_job(job["id"]))
+        copies = store.recoverable_backups(job["id"])
+        self.assertTrue(copies, "deleting a job left no copy behind")
+        self.assertTrue(store.restore_backup(copies[0], "job"))
+        self.assertEqual(store.get_job(job["id"])["title"], "Network Engineer")
+
+    def test_rewriting_a_record_keeps_the_previous_version(self):
+        job = store.save_job({"title": "first", "company": "Initech"})
+        store.save_job({"id": job["id"], "title": "second", "company": "Initech"})
+        newest = store.recoverable_backups(job["id"])[0]
+        self.assertEqual(json.loads(newest.read_text())["title"], "first")
+
+    def test_newest_copy_sorts_by_time_not_by_reason(self):
+        # Filenames lead with the timestamp: a name that led with "deleted" vs "replace"
+        # orders by reason, and the copy a restore picks up was the older one.
+        store.save_packet({"id": "packet_sort_check", "job_id": "job_x", "answers": []})
+        store.save_packet({"id": "packet_sort_check", "job_id": "job_x", "answers": [], "approved": True})
+        store.delete_packet("packet_sort_check")
+        copies = store.recoverable_backups("packet_sort_check")
+        self.assertEqual(len(copies), 2, f"expected a replace copy and a delete copy, got {copies}")
+        self.assertTrue(copies[0].name.endswith("-deleted.json"),
+                        f"the delete copy must be the newest, got {copies[0].name}")
+
+    def test_profile_backups_do_not_stampede(self):
+        # The dashboard saves on every edit; a copy per keystroke buries the useful ones.
+        before = len(store.recoverable_backups("profile"))
+        for i in range(5):
+            store.save_profile({"name": "n%d" % i})
+        self.assertLessEqual(len(store.recoverable_backups("profile")) - before, 1,
+                             "profile backups are not rate limited")
+
+    def test_backups_are_capped(self):
+        job = store.save_job({"title": "cap", "company": "Initech"})
+        for i in range(store.KEEP_BACKUPS + 20):
+            store.save_job({"id": job["id"], "title": "v%d" % i, "company": "Initech"})
+        self.assertLessEqual(len(store.recoverable_backups(job["id"])), store.KEEP_BACKUPS)
 
 
 class GeneratedProseIsScrubbed(unittest.TestCase):

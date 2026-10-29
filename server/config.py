@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "FillDesk"
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("FILLDESK_DATA", ROOT / "data"))
@@ -28,6 +28,7 @@ JOBS_DIR = DATA_DIR / "jobs"
 PACKETS_DIR = DATA_DIR / "packets"
 FILES_DIR = DATA_DIR / "files"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
+BACKUP_DIR = DATA_DIR / "backups"   # copies of records before they are replaced or removed
 
 DEFAULT_PORT = int(os.environ.get("FILLDESK_PORT", "8756"))
 DEFAULT_HOST = os.environ.get("FILLDESK_HOST", "127.0.0.1")
@@ -57,7 +58,7 @@ REVIEW_CATEGORIES = {
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, JOBS_DIR, PACKETS_DIR, FILES_DIR):
+    for d in (DATA_DIR, JOBS_DIR, PACKETS_DIR, FILES_DIR, BACKUP_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 

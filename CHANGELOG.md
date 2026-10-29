@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.7 — jobs and packets are recoverable
+Replacing or deleting a job or packet now writes a timestamped copy to
+`data/backups/` first, capped at 40 per record, and `tools/recover.py` lists them and puts
+one back. The profile had always been the only thing copied anywhere, and a throwaway test
+that wiped `data/jobs` and `data/packets` found nine packets and every saved posting gone
+with nothing to restore from. A copy nobody can find is not a backup, so the tool lists
+what exists and says whether the newest copy predates a replace or a delete.
+
+Backups are named `<record>-<stamp>-<replace|deleted>.json` — stamp first, because sorting
+by name has to order by time. Profile backups are rate-limited to one per ten minutes: the
+dashboard saves on every edit.
+
 ## 0.1.6 — labelled fields align, and assets stop caching
 Experience and saved-answer cards are a two-column form now: a fixed label column with
 every control starting at the same x, whatever the label length. The rules are scoped to
