@@ -469,6 +469,7 @@
     if (!state.plan.length) await preview();
     state.running = true;
     state.cancelled = false;
+    state.reached = 0;
     ui.setRunning(true);
     const results = { filled: 0, uploaded: 0, unmatched: 0, blocked: 0, review: 0, unverified: 0, failed: [] };
     const delay = Number(state.settings.visible_delay_ms ?? 260);
@@ -495,6 +496,8 @@
       // Ask-per-field mode: the human decides on each value, one at a time.
       if (state.reviewEach && !state.reviewAll) {
         desc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        ui.line({ kind: 'warn', text: `waiting on you: ${clipLabel(desc)} — press Y to fill, N to skip, A for the rest` });
+        state.reached = i;
         const choice = await ui.review(item, i, state.plan.length);
         if (choice === 'skip') { results.unmatched++; ui.line({ kind: 'warn', text: `skipped ${clipLabel(desc)} — yours to answer` }); continue; }
         if (choice === 'stop') { state.cancelled = true; break; }
@@ -539,7 +542,8 @@
     }
     state.running = false;
     ui.setRunning(false);
-    ui.summary(results, state.settings.click_navigation !== false, state.changes.length);
+    ui.summary(results, state.settings.click_navigation !== false, state.changes.length,
+               state.cancelled ? { reached: state.reached || 0, total: state.plan.length } : null);
     if (IS_TOP) {
       // Same job in every other frame of this tab (iframe-hosted ATS forms).
       send({ type: 'broadcast-external', msg: { type: 'run' } });
@@ -861,6 +865,11 @@
       .row input{flex:1;background:#0f141a;border:1px solid #2a3442;color:#e8ecf3;border-radius:6px;padding:6px;font-size:11.5px}
       .hint{padding:0 11px 10px;color:#93a0b5;font-size:11px}
       .rev{border-top:1px solid #2a3442;background:#141a24;padding:9px 11px}
+      /* A panel waiting on a decision has to look like it is waiting, or it reads as a
+         hung tool: the reviewer's hand was already on the big button. */
+      .rev.waiting{background:#182231;border-top-color:#5b8cff;box-shadow:inset 0 2px 0 #5b8cff}
+      .rev.waiting .revq{color:#9db8ff}
+      .rev.waiting #fd-ry{box-shadow:0 0 0 3px rgba(91,140,255,.35)}
       .revq{color:#93a0b5;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px}
       .revl{font-weight:700;margin:2px 0}
       .revv{background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:6px;margin:5px 0 7px;
@@ -1007,10 +1016,13 @@
         if (on) btn.onclick = () => stop();
         else btn.onclick = () => run();
       },
-      summary(r, navAllowed, undoable) {
+      summary(r, navAllowed, undoable, stopped) {
         const sum = root.querySelector('#fd-sum');
         sum.style.display = 'block';
-        sum.innerHTML = `<b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance)${r.unverified ? ` · <b>${r.unverified}</b> left for you (answer unverified)` : ''} · <b>${r.unmatched}</b> unrecognised
+        const head = stopped
+          ? `<b>Stopped after ${stopped.reached} of ${stopped.total} fields</b> — the rest were never touched, so nothing below is a verdict on them.<br>`
+          : '';
+        sum.innerHTML = `${head}<b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance)${r.unverified ? ` · <b>${r.unverified}</b> left for you (answer unverified)` : ''} · <b>${r.unmatched}</b> unrecognised
           <div class="hint">Nothing was submitted${r.review ? `, and <b>${r.review}</b> answer(s) were flagged <span style="color:#f0c48a">verify</span>` : ''}. Read the whole form — including collapsed sections — then submit it yourself${navAllowed ? '' : ' (navigation clicks are off)'}.</div>
           <div class="hint"><b>You are responsible for everything you submit.</b> Check every answer against your actual situation before you press Submit.${undoable ? ' <button class="btn" id="fd-undo" style="margin-top:4px">Undo what FillDesk typed</button>' : ''}</div>`;
         const undo = sum.querySelector('#fd-undo');
@@ -1031,11 +1043,28 @@
           root.querySelector('#fd-rdate').onclick = () => openDatePicker(item, root.querySelector('#fd-rdate'), root.getRootNode());
         }
         box.style.display = 'block';
+        box.classList.add('waiting');
+        // The run button sits exactly where a hand reaching for "Fill" already points,
+        // and it read "Filling… (click to stop)" — one reviewer pressed it, stopped the
+        // run at field 1, and concluded the extension filled nothing. Shorter text, and
+        // the decision button gets focus so Y and Enter both work immediately.
+        const runBtn = root.querySelector('#fd-fill');
+        runBtn.textContent = 'Stop run';
+        runBtn.classList.remove('pri');
+        try { root.querySelector('#fd-ry').focus({ preventScroll: true }); } catch (e) { /* headless */ }
+        box.scrollIntoView({ block: 'nearest' });
         return new Promise((resolve) => { reviewResolve = resolve; });
       },
       reviewOpen() { return !!reviewResolve; },
       answerReview(choice) {
-        root.querySelector('#fd-rev').style.display = 'none';
+        const box = root.querySelector('#fd-rev');
+        box.style.display = 'none';
+        box.classList.remove('waiting');
+        if (running) {
+          const runBtn = root.querySelector('#fd-fill');
+          runBtn.textContent = running ? 'Filling…' : 'Fill application';
+          runBtn.classList.add('stop');
+        }
         const r = reviewResolve;
         reviewResolve = null;
         if (r) r(choice);

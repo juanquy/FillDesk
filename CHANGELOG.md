@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.9 — a run waiting on you looks like it is waiting
+Ask-per-field stops before typing and waits for a decision. The panel gave no sign: the
+button that a moment ago said **Fill application** now said **Filling… (click to stop)** in
+exactly the spot a hand reaching for "Fill" is already pointing at. One reviewer pressed
+it, halted the run at field 1 of 30, and reported that the extension fills nothing — the
+summary then read `0 filled · 0 left for you (compliance)`, which looked like a verdict on
+fields it had never reached.
+
+While a decision is pending: the card is highlighted, it scrolls into view, focus lands on
+**Fill (Y)** so Y and Enter work blind, the run button shortens to **Stop run**, and the log
+says `waiting on you: <field>`. A stopped run now reports `Stopped after 1 of 30 fields —
+the rest were never touched`.
+
 ## 0.1.8 — an answer you did not verify is never typed
 Approval is the "I have verified this" checkbox, so that checkbox now decides what the
 extension may type. Two holes were closed. A forced approval used to release answers that

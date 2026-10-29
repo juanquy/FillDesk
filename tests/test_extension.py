@@ -459,6 +459,29 @@ class LabelledFieldsAlign(unittest.TestCase):
         self.assertGreaterEqual(control_x[0] - label_x[0], 120, "the label column is too narrow to hold a label")
 
 
+class WaitingIsObvious(unittest.TestCase):
+    """Ask-per-field pauses with nothing moving. In a dark panel whose primary button has
+    turned red and says "click to stop", one reviewer pressed it, halted the run at field
+    one, and reported that the extension fills nothing."""
+
+    def test_the_waiting_state_is_marked_said_and_focused(self):
+        content = (EXT / "content.js").read_text()
+        self.assertIn("waiting on you", content, "the log never says it is waiting for input")
+        self.assertIn("classList.add('waiting')", content, "the card has no waiting state")
+        self.assertIn(".rev.waiting", (WEB / "content.css").read_text() if (WEB / "content.css").exists() else content,
+                      "the waiting card looks like every other card")
+        self.assertRegex(content, r"#fd-ry'\)\.focus", "keyboard control needs focus on the fill button")
+        self.assertIn("'Stop run'", content, "the run button keeps its long 'click to stop' label")
+        block = content[content.index("answerReview(choice)"):]
+        self.assertIn("classList.remove('waiting')", block[:420], "the waiting style outlives the decision")
+
+    def test_a_stopped_run_says_so_instead_of_reading_as_zero(self):
+        content = (EXT / "content.js").read_text()
+        self.assertIn("Stopped after", content, "a stopped run reports the same zeros as an empty one")
+        self.assertIn("never touched", content, "the user is not told the rest was not evaluated")
+        self.assertIn("state.reached = i", content, "the run does not track how far it got")
+
+
 class UnverifiedAnswersExplained(unittest.TestCase):
     """The server withholds answers the human never confirmed. If the extension then says
     "unrecognised", the user hunts for a matching bug instead of ticking the box."""
