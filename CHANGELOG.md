@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.3 — the extension stands down on its own dashboard
+`content_scripts` match `http://*/*`, which includes the local dashboard: a page made
+entirely of input fields. The panel mounted there, and pressing Fill would have typed an
+approved packet into the profile form that produces the packet. Boot, the mount, and
+popup-driven fills now compare `location.origin` with the configured server and do
+nothing on a match.
+
+## 0.1.2 — the build number is visible where you look
+A fixed content script and a stale one look identical, and Chrome's error list re-renders
+old entries against the *current* file, so a stale trace points at a line that never
+threw. The panel header now carries `v<version>`, the popup appends it to the connection
+state, and the page console logs the version plus whether the matcher and calendar
+helpers attached. Manifest and server versions are held equal by a test.
+
+## 0.1.1 — declared the running flag
+`content.js` runs in strict mode, and `setRunning()` assigned `running = on` without ever
+declaring it. `ReferenceError: running is not defined` on the first click, before a single
+field was typed. Fixed, and a static audit now fails any browser file that assigns an
+undeclared identifier or omits `'use strict'`.
+
 ## 0.1.0 — first release
 
 - **Ask-per-field review mode** in the extension: Y / N / A / Esc, plus *Undo what
