@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4 — the origin guard is path-scoped
+0.1.3 compared only origins, and the sample form at `/preview.html` is served from the
+dashboard's own origin, so the panel vanished from the one page the docs tell you to open
+first. The guard now lists the dashboard's paths and leaves the sample form alone.
+
 ## 0.1.3 — the extension stands down on its own dashboard
 `content_scripts` match `http://*/*`, which includes the local dashboard: a page made
 entirely of input fields. The panel mounted there, and pressing Fill would have typed an

@@ -339,6 +339,15 @@ class OwnOriginIsExcluded(unittest.TestCase):
         self.assertIn("if (isOwnDashboard()) return false", body[:300], "the panel must not mount there")
         boot = content[content.index("async function boot"):]
         self.assertIn("own-origin", boot[:900], "boot must stop on our own origin")
+        # The guard must be scoped to the dashboard's paths, not the whole origin:
+        # /preview.html is the sample form, served from that same origin on purpose.
+        block = content[content.index("DASHBOARD_PATHS = new Set"):]
+        block = block[:block.index(")") + 1]
+        listed = set(re.findall(r"'([^']+)'", block))
+        self.assertIn("/", listed, "the dashboard root must be excluded")
+        self.assertIn("/index.html", listed, "the dashboard must be excluded")
+        self.assertNotIn("/preview.html", listed,
+                         "the sample form shares the origin and must keep the panel")
         handler = content[content.index("chrome.runtime.onMessage.addListener"):]
         self.assertIn("does not run on its own dashboard", handler[:900],
                       "a fill driven from the popup must be refused on our own origin")

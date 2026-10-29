@@ -890,6 +890,7 @@
       if (!document.body) return setTimeout(mount, 200);
       mounted = true;
       document.body.appendChild(host);
+      try { host.dataset.filldeskBuild = chrome.runtime.id + '@' + chrome.runtime.getManifest().version; } catch (e) { /* ignore */ }
       const collapsed = localStorage.getItem('filldesk_collapsed') === '1';
       if (collapsed) root.querySelector('.box').classList.add('hide');
       $('fd-min').onclick = () => {
@@ -1007,8 +1008,16 @@
 
   // Never run on our own dashboard. It is a page full of inputs, and the extension
   // filling it would type an approved packet into the profile form that produced it.
+  //
+  // Scoped to the dashboard's own paths on purpose: the sample form at
+  // /preview.html is served from this very origin and exists so the autofiller can be
+  // tested. Excluding the whole origin deleted the panel from the test form — which is
+  // exactly the page a reviewer is told to open first.
+  const DASHBOARD_PATHS = new Set(['/', '/index.html', '/app.js', '/styles.css']);
   const isOwnDashboard = () => {
-    try { return new URL(state.server).origin === location.origin; } catch (e) { return false; }
+    try {
+      return new URL(state.server).origin === location.origin && DASHBOARD_PATHS.has(location.pathname);
+    } catch (e) { return false; }
   };
 
   function looksLikeApplication() {
@@ -1029,6 +1038,7 @@
     }
     try {
       const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
+      host.dataset.filldeskBuild = chrome.runtime.id + '@' + build;
       console.info(`[FillDesk] content script v${build} on ${location.host}`
         + ` (matcher ${window.FILLDESK_MATCHER ? 'ok' : 'MISSING'}, calendar ${window.FILLDESK_CAL ? 'ok' : 'MISSING'})`);
     } catch (e) { /* logging must never break a page */ }
