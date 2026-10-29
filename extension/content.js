@@ -1005,7 +1005,14 @@
   // ---------------------------------------------------------------- boot
   const IS_TOP = window.top === window.self;
 
+  // Never run on our own dashboard. It is a page full of inputs, and the extension
+  // filling it would type an approved packet into the profile form that produced it.
+  const isOwnDashboard = () => {
+    try { return new URL(state.server).origin === location.origin; } catch (e) { return false; }
+  };
+
   function looksLikeApplication() {
+    if (isOwnDashboard()) return false;
     const host = location.hostname.toLowerCase();
     if (ATS_HOSTS.some((h) => host.endsWith(h))) return true;
     if (/\/(apply|application|posting|opening|job\/|jobs\/|career)/i.test(location.pathname)) return true;
@@ -1014,12 +1021,17 @@
   }
 
   async function boot() {
+    await loadConfig();
+    if (isOwnDashboard()) {
+      // Silent by design: the dashboard is FillDesk, not a form to fill.
+      window.__FILLDESK__ = 'own-origin';
+      return;
+    }
     try {
       const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
       console.info(`[FillDesk] content script v${build} on ${location.host}`
         + ` (matcher ${window.FILLDESK_MATCHER ? 'ok' : 'MISSING'}, calendar ${window.FILLDESK_CAL ? 'ok' : 'MISSING'})`);
     } catch (e) { /* logging must never break a page */ }
-    await loadConfig();
     const APP_LIKE = looksLikeApplication();
     if (IS_TOP && APP_LIKE) ui.mount();
     if (localStorage.getItem('filldesk_review_each') === '1') { state.reviewEach = true; ui.setReviewEach(true); }
@@ -1043,6 +1055,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     (async () => {
       try {
+        if (isOwnDashboard()) return respond({ ok: false, error: 'FillDesk does not run on its own dashboard' });
         switch (msg && msg.type) {
           case 'scan': respond({ ok: true, counts: await preview() }); break;
           case 'run': {

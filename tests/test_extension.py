@@ -326,6 +326,24 @@ class RefusedQuestionGuidance(unittest.TestCase):
                       "the amber block must repeat the hard refusal")
 
 
+class OwnOriginIsExcluded(unittest.TestCase):
+    """The dashboard is a page full of inputs. Letting the autofiller run there means
+    clicking Fill types an approved packet into the profile form that produced it."""
+
+    def test_the_extension_stands_down_on_its_own_dashboard(self):
+        content = (EXT / "content.js").read_text()
+        self.assertRegex(content, r"(function|const) isOwnDashboard", "no origin check")
+        guard = content[content.index("isOwnDashboard"):]
+        self.assertIn("state.server", guard[:400], "the check must compare against the configured server")
+        body = content[content.index("function looksLikeApplication"):]
+        self.assertIn("if (isOwnDashboard()) return false", body[:300], "the panel must not mount there")
+        boot = content[content.index("async function boot"):]
+        self.assertIn("own-origin", boot[:900], "boot must stop on our own origin")
+        handler = content[content.index("chrome.runtime.onMessage.addListener"):]
+        self.assertIn("does not run on its own dashboard", handler[:900],
+                      "a fill driven from the popup must be refused on our own origin")
+
+
 class BuildStamp(unittest.TestCase):
     """A stale content script and a fixed one look identical, and Chrome's error list
     keeps old entries. The build number has to be visible where the user looks."""
