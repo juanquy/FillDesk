@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "FillDesk"
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("FILLDESK_DATA", ROOT / "data"))

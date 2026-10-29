@@ -42,6 +42,63 @@ def node_available() -> bool:
         return False
 
 
+def find_browser():
+    for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def render_dom(profile_payload, suffix="", port=8795, wait_ms=6000):
+    """Serve a throwaway profile and return the DOM a real Chromium builds for it.
+
+    Layout and binding bugs are invisible to grep: a marker that lands outside its tag,
+    or a label column that a third-party stylesheet raggies, both look fine in source.
+    Returns None when no browser is installed so callers can skip rather than fail.
+    """
+    browser = find_browser()
+    if not browser:
+        return None
+    tmp = Path(tempfile.mkdtemp(prefix="filldesk_render_"))
+    env = {**os.environ, "FILLDESK_DATA": str(tmp / "data"),
+           "FILLDESK_LLM_PROVIDER": "none", "DISPLAY": ""}
+    server = subprocess.Popen([sys.executable, "-m", "server", "--port", str(port)],
+                              cwd=str(ROOT), env=env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        token = tmp / "data" / "api_token"
+        for _ in range(80):
+            try:
+                token.read_text()
+                urllib.request.urlopen(base + "/api/status", timeout=1).read()
+                break
+            except Exception:  # noqa: BLE001 - wait for boot
+                time.sleep(0.1)
+        else:
+            raise AssertionError("throwaway server never came up")
+        if profile_payload:
+            req = urllib.request.Request(
+                base + "/api/profile", method="PUT",
+                headers={"content-type": "application/json",
+                         "x-filldesk-token": token.read_text().strip()},
+                data=json.dumps(profile_payload).encode())
+            urllib.request.urlopen(req, timeout=5).read()
+        return subprocess.run(
+            [browser, "--headless=new", "--disable-gpu", "--no-first-run",
+             "--user-data-dir=" + str(tmp / "profile"), "--window-size=1440,1400",
+             f"--virtual-time-budget={wait_ms}", "--dump-dom", base + "/" + suffix],
+            capture_output=True, text=True, timeout=120, env=env).stdout
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            server.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 class ManifestTests(unittest.TestCase):
     def setUp(self):
         self.manifest = json.loads((EXT / "manifest.json").read_text())
@@ -225,11 +282,7 @@ class DatePickers(unittest.TestCase):
 
     @staticmethod
     def _browser():
-        for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
-            found = shutil.which(name)
-            if found:
-                return found
-        return None
+        return find_browser()
 
     @unittest.skipUnless(True, "runs only when a Chromium browser is installed")
     def test_dashboard_renders_every_picker(self):
@@ -351,6 +404,59 @@ class OwnOriginIsExcluded(unittest.TestCase):
         handler = content[content.index("chrome.runtime.onMessage.addListener"):]
         self.assertIn("does not run on its own dashboard", handler[:900],
                       "a fill driven from the popup must be refused on our own origin")
+
+
+class LabelledFieldsAlign(unittest.TestCase):
+    """A form whose boxes start at a different x on every row reads as broken, and the
+    cause here was weak CSS: bare `label` selectors lose to any browser extension that
+    styles labels, which is exactly what happened on a reviewer's machine. So the rule is
+    scoped to our own container, and the alignment is measured in a real browser render
+    rather than argued about from a screenshot."""
+
+    def test_the_rule_is_scoped_and_fixed_width(self):
+        css = (WEB / "styles.css").read_text()
+        self.assertIn(".sub .fields .row > label", css, "label column is not scoped to our container")
+        rule = ".sub .fields .row > label {"
+        self.assertIn(rule, css, "the label column rule is missing")
+        block = css[css.index(rule):]
+        block = block[:block.index("}")]
+        self.assertRegex(block, r"flex:\s*0 0 \d+px", "the label column must be a fixed width")
+        self.assertIn(".sub .fields .row > input", css, "the controls are not told to fill the column")
+
+    def test_the_card_marks_its_labelled_rows(self):
+        js = (WEB / "app.js").read_text()
+        self.assertIn("'fields'", js, "labelled cards must carry the .fields container")
+        self.assertIn("? 'fields' : 'grid3'", js,
+                      "single-line cards must keep the compact grid, not the label column")
+
+    def test_every_box_starts_at_the_same_x(self):
+        render = render_dom({"experience": [
+            {"company": "A", "title": "B", "location": "C", "start": "2021-06", "end": "2023",
+             "context": "one line", "bullets": ["did a thing"], "tech": ["python"]},
+            {"company": "D", "title": "E", "location": "F", "start": "2018", "end": "Present",
+             "context": "another", "bullets": ["did another"], "tech": ["bash"]},
+        ], "boilerplate": [{"label": "Why this company?", "text": "Because."},
+                           {"label": "Why leaving?", "text": "Grew."}]}, "#selftest-align")
+        if render is None:
+            self.skipTest("no browser available for the render check")
+        import json as _json
+        m = re.search(r'id="selftest-align">([^<]+)<', render)
+        self.assertTrue(m, "the render never reported its own alignment")
+        edges = _json.loads(m.group(1))
+        controls, labels = edges["controls"], edges["labels"]
+        self.assertGreater(len(controls), 5, "the sample profile rendered no labelled cards")
+        for key, vals in controls.items():
+            self.assertEqual(len(set(vals)), 1, f"the {key} box sits at {sorted(set(vals))} in different entries")
+        for key, vals in labels.items():
+            self.assertEqual(len(set(vals)), 1, f"the {key} label sits at {sorted(set(vals))}")
+        control_x = sorted({v[0] for v in controls.values()})
+        label_x = sorted({v[0] for v in labels.values()})
+        self.assertEqual(len(control_x), 1, f"boxes start at several x positions: {control_x}")
+        self.assertEqual(len(label_x), 1, f"labels start at several x positions: {label_x}")
+        # Equal lefts would also be true with the label stacked on top of the box, which
+        # is the layout this replaced. Side by side is the thing under test.
+        self.assertLess(label_x[0], control_x[0], "labels are not in a column beside the boxes")
+        self.assertGreaterEqual(control_x[0] - label_x[0], 120, "the label column is too narrow to hold a label")
 
 
 class ErrorsReachTheUser(unittest.TestCase):

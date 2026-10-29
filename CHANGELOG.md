@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.6 — labelled fields align, and assets stop caching
+Experience and saved-answer cards are a two-column form now: a fixed label column with
+every control starting at the same x, whatever the label length. The rules are scoped to
+`.sub .fields .row > label` because the old bare `label` selectors lost to a browser
+extension on one machine, which raggied every row on that machine and nobody else's. A
+real Chromium render now measures the left edge of each box and asserts they match —
+equal lefts alone would also pass with labels stacked on top, so the test checks the
+label column sits beside the boxes.
+
+Static files carried no `Cache-Control` at all, so the browser chose how long to keep the
+dashboard's CSS and JS: an upgraded extension could sit next to a week-old stylesheet and
+produce a bug that source cannot explain. Everything served from `web/` is `no-store`
+now, and `HEAD` returns 200 instead of 501.
+
 ## 0.1.5 — extension errors appear in the panel
 A failure used to be visible only on `chrome://extensions`, which you have to navigate to
 and which keeps old entries: one 0.1.0 `ReferenceError` sat there for days, its snippet

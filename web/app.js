@@ -159,13 +159,13 @@ function itemCard(host, item, fields, defaults) {
       ? `<textarea data-k="${f.key}"${cal} rows="4" class="${f.key === 'bullets' ? 'mono' : ''}" placeholder="${esc(f.ph || '')}">${esc(f.key === 'bullets' ? (item[f.key] || []).join('\n') : item[f.key] || '')}</textarea>`
       : `<input data-k="${f.key}"${cal} value="${esc(item[f.key] || '')}" placeholder="${esc(f.ph || '')}">`;
     return `
-    <div class="row col-${f.key}"><label>${esc(f.label)}</label>
+    <div class="row" data-field="${f.key}"><label>${esc(f.label)}</label>
       ${control}
     </div>`;
   }).join('');
   wrap.innerHTML = `<div class="head"><span class="muted">${esc(item.title || item.label || item.school || 'entry')}</span>
       <button class="x ghost" type="button">remove</button></div>
-      <div class="${fields.some((f) => f.multiline) ? '' : 'grid3'}">${rows}</div>`;
+      <div class="${fields.some((f) => f.multiline) ? 'fields' : 'grid3'}">${rows}</div>`;
   wrap.querySelector('button.x').onclick = () => { wrap.remove(); };
   wrap.dataset.id = id;
   host.appendChild(wrap);
@@ -225,6 +225,27 @@ function renderBoilerplate() {
 $('#p-add-exp').onclick = () => { itemCard($('#p-experience'), { id_prefix: 'exp' }, EXP_FIELDS, { id_prefix: 'exp' }); bindCalendars($('#p-experience')); };
 $('#p-add-edu').onclick = () => { itemCard($('#p-education'), { id_prefix: 'edu' }, EDU_FIELDS, { id_prefix: 'edu' }); bindCalendars($('#p-education')); };
 $('#p-add-boiler').onclick = () => itemCard($('#p-boilerplate'), { id_prefix: 'ans' }, BOIL_FIELDS, { id_prefix: 'ans' });
+
+// Test hook: #selftest-align writes the left edge of every control in a labelled card
+// into the DOM, so "the boxes line up" is an assertion instead of a screenshot two
+// people disagree about. Harmless in normal use; nothing reads it but the test.
+if (location.hash === '#selftest-align') {
+  setTimeout(() => {
+    const edges = { controls: {}, labels: {} };
+    document.querySelectorAll('.sub .fields .row').forEach((row) => {
+      const control = row.querySelector('[data-k]');
+      const label = row.querySelector('label');
+      if (!control || !label) return;
+      const key = control.getAttribute('data-k');
+      (edges.controls[key] = edges.controls[key] || []).push(Math.round(control.getBoundingClientRect().left));
+      (edges.labels[key] = edges.labels[key] || []).push(Math.round(label.getBoundingClientRect().left));
+    });
+    const out = document.createElement('div');
+    out.id = 'selftest-align';
+    out.textContent = JSON.stringify(edges);
+    document.body.appendChild(out);
+  }, 1200);
+}
 
 $('#p-paste-toggle').onclick = () => { $('#p-resume').focus(); toast('Type or paste below, then Save profile.', 'ok'); };
 

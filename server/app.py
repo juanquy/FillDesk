@@ -601,11 +601,36 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._cors(origin="")
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # No heuristic caching. Without this the browser decides how long to keep the
+        # dashboard's own CSS and JS, and an upgraded extension paired with a dashboard
+        # still rendering last week's stylesheet produces bugs that cannot be reproduced
+        # from source — the single most confusing failure this tool has produced.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        """Header-only GET. Link checkers, prefetchers and curl -I were being answered
+        with 501 Unsupported method, which reads as 'the server is broken'."""
+        path = urllib.parse.urlparse(self.path).path
+        if path.startswith("/api/"):
+            self.send_response(200 if path in ("/api/status", "/api/token", "/api/settings") else 405)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        rel = "index.html" if path in ("/", "") else path.lstrip("/")
+        candidate = (config.WEB_DIR / rel).resolve()
+        ok = str(candidate).startswith(str(config.WEB_DIR.resolve())) and candidate.is_file()
+        self.send_response(200 if ok else 404)
+        if ok:
+            ctype = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(candidate.stat().st_size))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)

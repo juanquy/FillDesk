@@ -788,6 +788,42 @@ class StatusMentionsAreFlagged(unittest.TestCase):
         self.assertFalse(sensitive.status_mentions("Partnered with a veteran-owned supplier"))
 
 
+class FreshAssets(unittest.TestCase):
+    """The dashboard is reloaded by hand after every change, and a browser that caches
+    CSS heuristically serves last week's stylesheet next to this week's extension. That
+    produces failures no source read can explain — the most confusing bug of this build.
+    So static assets say no-store, and HEAD is answered instead of 501."""
+
+    def _head(self, path):
+        req = urllib.request.Request(BASE + path, method="HEAD")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status, dict(resp.headers)
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers)
+
+    def _get_headers(self, path):
+        req = urllib.request.Request(BASE + path)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+            return resp.status, dict(resp.headers)
+
+    def test_static_assets_are_not_cacheable(self):
+        for path in ("/styles.css", "/app.js", "/"):
+            status, headers = self._get_headers(path)
+            self.assertEqual(status, 200, path)
+            self.assertIn("no-store", headers.get("Cache-Control", "").lower(),
+                          f"{path} may be cached by the browser")
+
+    def test_head_is_answered(self):
+        status, headers = self._head("/styles.css")
+        self.assertEqual(status, 200, f"HEAD /styles.css returned {status}")
+        self.assertTrue(headers.get("Content-Length"), "HEAD should report the size")
+        self.assertIn("no-store", headers.get("Cache-Control", "").lower())
+        status, _ = self._head("/nope.css")
+        self.assertEqual(status, 404, "HEAD of a missing file must not claim success")
+
+
 class GeneratedProseIsScrubbed(unittest.TestCase):
     """A model that *infers* a compliance fact must not be able to write it.
 
