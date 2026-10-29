@@ -8,6 +8,7 @@ echo "== python api + rules (stdlib unittest) =="
 python3 tests/test_api.py            || fail=1
 python3 tests/test_extension.py      || fail=1
 python3 tests/test_resume_ingest.py  || fail=1
+python3 tests/test_importers.py        || fail=1
 python3 tests/test_no_personal_data.py || fail=1
 echo
 echo "== matcher (node:test) =="

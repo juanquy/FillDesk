@@ -91,6 +91,20 @@ python3 tools/seed_demo.py      # demo profile + two saved jobs
 4. Click the FillDesk icon → paste the **token** printed in step 1 → **Save connection**
 5. Pin the icon
 
+## 4b. Two buttons worth knowing
+
+- **`Cover letter`** — writes a letter for the posting on screen (needs the job saved
+  first). It appears as a draft with Copy and "Review in dashboard". A draft is not an
+  answer: nothing is typed or uploaded until you build a packet, read it, approve it.
+- **`Ask per field`** — the careful mode. It stops at each field and waits: `Y` fills,
+  `N` leaves it to you, `A` fills the rest, `Esc` stops. After a run, **Undo what
+  FillDesk typed** clears what it wrote.
+
+Useful before any of it: `python3 tools/import_skills.py skills.txt` and
+`python3 tools/import_linkedin.py linkedin-export.zip --dry` (LinkedIn → Settings →
+Data privacy → *Get a copy of your data* — the official export, because logging into
+LinkedIn through a tool is how accounts get restricted).
+
 ## 5. Verify it on the sample form before trusting it
 
 Dashboard → Settings → *Open the sample application form* (or open

@@ -38,6 +38,9 @@
     cancelled: false,
     panel: null,
     log: [],
+    reviewEach: false,
+    reviewAll: false,
+    changes: [],
   };
 
   // ---------------------------------------------------------------- transport
@@ -442,6 +445,18 @@
       if (!desc.visible) { results.unmatched++; continue; }
       if (!state.settings.overwrite_filled && desc.currentValue && desc.kind !== 'select' && desc.kind !== 'radio' && desc.kind !== 'checkbox') { continue; }
 
+      // Ask-per-field mode: the human decides on each value, one at a time.
+      if (state.reviewEach && !state.reviewAll) {
+        desc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        const choice = await ui.review(item, i, state.plan.length);
+        if (choice === 'skip') { results.unmatched++; ui.line({ kind: 'warn', text: `skipped ${clipLabel(desc)} — yours to answer` }); continue; }
+        if (choice === 'stop') { state.cancelled = true; break; }
+        if (choice === 'all') state.reviewAll = true;
+      }
+      if (decision.action === 'fill' && desc.kind !== 'select' && desc.kind !== 'radio' && desc.kind !== 'checkbox') {
+        state.changes.push({ el: desc.el, kind: desc.kind, prev: desc.currentValue || '' });
+      }
+
       try {
         if (decision.action === 'upload') {
           if (state.settings.upload_documents === false) { results.unmatched++; continue; }
@@ -477,7 +492,7 @@
     }
     state.running = false;
     ui.setRunning(false);
-    ui.summary(results, state.settings.click_navigation !== false);
+    ui.summary(results, state.settings.click_navigation !== false, state.changes.length);
     if (IS_TOP) {
       // Same job in every other frame of this tab (iframe-hosted ATS forms).
       send({ type: 'broadcast-external', msg: { type: 'run' } });
@@ -493,7 +508,61 @@
     document.querySelectorAll('[data-filldesk]').forEach((el) => { el.style.outline = ''; delete el.dataset.filldesk; });
   }
 
+  function setReviewEach(on) {
+    state.reviewEach = !!on;
+    state.reviewAll = false;
+    ui.setReviewEach(state.reviewEach);
+    localStorage.setItem('filldesk_review_each', state.reviewEach ? '1' : '0');
+    ui.line({ kind: 'ok', text: state.reviewEach
+      ? 'ask-per-field is ON: it will stop at each field — Y fills, N skips, A fills the rest, Esc stops'
+      : 'ask-per-field is OFF: it fills the approved plan in one run' });
+  }
+
+  async function draftCover() {
+    const last = localStorage.getItem('filldesk_last_job');
+    if (!last) return ui.line({ kind: 'warn', text: 'save the job first — Cover letter needs a saved posting' });
+    ui.line({ kind: 'ok', text: 'drafting a cover letter for this posting…' });
+    try {
+      const d = await api(`/api/jobs/${last}/draft_cover`, { method: 'POST', body: {} });
+      ui.showDraft(d, last);
+      ui.line({ kind: 'ok', text: `draft ready (${d.words} words, ${d.method}${d.model ? ' · ' + d.model : ''}) — read it before you use it` });
+      if (d.redactions && d.redactions.length) {
+        ui.line({ kind: 'bad', text: `removed ${d.redactions.length} compliance statement(s) the drafter invented — only you can state those` });
+      }
+      if (d.note) ui.line({ kind: 'warn', text: d.note });
+    } catch (e) {
+      ui.line({ kind: 'bad', text: 'draft failed: ' + e.message });
+    }
+  }
+
+  function undoChanges() {
+    let n = 0;
+    for (const c of state.changes.slice().reverse()) {
+      try {
+        if (!document.contains(c.el)) continue;
+        if (c.kind === 'editable') { c.el.textContent = c.prev; }
+        else { setNativeValue(c.el, c.prev); }
+        c.el.dispatchEvent(new Event('input', { bubbles: true }));
+        c.el.dispatchEvent(new Event('change', { bubbles: true }));
+        n++;
+      } catch (e) { /* a field the page replaced; leave it alone */ }
+    }
+    state.changes = [];
+    clearMarks();
+    ui.line({ kind: n ? 'ok' : 'warn', text: n ? `cleared ${n} field(s) FillDesk typed` : 'nothing to undo' });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (!ui.reviewOpen()) return;
+    const t = e.target;
+    if (t && (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable)) return;
+    const k = (e.key || '').toLowerCase();
+    const map = { y: 'fill', n: 'skip', a: 'all', escape: 'stop' };
+    if (map[k]) { e.preventDefault(); e.stopPropagation(); ui.answerReview(map[k]); }
+  }, true);
+
   function stop() {
+    if (ui.reviewOpen()) ui.answerReview('stop');
     state.cancelled = true;
     state.running = false;
     ui.setRunning(false);
@@ -641,7 +710,7 @@
 
   // ---------------------------------------------------------------- panel UI
   const ui = (function buildPanel() {
-    let root, logEl, progEl, headEl, mounted = false;
+    let root, logEl, progEl, headEl, mounted = false, reviewResolve = null;
     const host = document.createElement('div');
     host.setAttribute('data-filldesk-panel', '');
     host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;right:18px;bottom:18px;font-family:system-ui,sans-serif;';
@@ -673,6 +742,18 @@
       .row{display:flex;gap:6px;padding:0 11px 10px}
       .row input{flex:1;background:#0f141a;border:1px solid #2a3442;color:#e8ecf3;border-radius:6px;padding:6px;font-size:11.5px}
       .hint{padding:0 11px 10px;color:#93a0b5;font-size:11px}
+      .rev{border-top:1px solid #2a3442;background:#141a24;padding:9px 11px}
+      .revq{color:#93a0b5;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px}
+      .revl{font-weight:700;margin:2px 0}
+      .revv{background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:6px;margin:5px 0 7px;
+            font-size:11.5px;max-height:66px;overflow:auto;color:#cdd6e3;white-space:pre-wrap}
+      .revb{display:flex;gap:6px;flex-wrap:wrap}
+      .revb .btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px}
+      .btn.off{opacity:.55}
+      .btn.on{background:#2b3f5c;border-color:#5b8cff}
+      .draft{border-top:1px solid #2a3442;padding:9px 11px}
+      .draft pre{margin:0 0 7px;max-height:150px;overflow:auto;white-space:pre-wrap;font:11.5px/1.5 ui-monospace,monospace;
+                 background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:7px}
       .hide .body{display:none}
       `;
     }
@@ -693,12 +774,34 @@
             <button class="btn" id="fd-save">Save job</button>
             <button class="btn" id="fd-next">Next page</button>
             <button class="btn" id="fd-packet">Build packet</button>
+            <button class="btn" id="fd-cover">Cover letter</button>
+            <button class="btn off" id="fd-review" title="ask before each field">Ask per field</button>
             <button class="btn" id="fd-settings">Settings</button>
           </div>
           <div class="legend">
             <span><i style="background:#2fbf7a"></i>filled</span>
             <span><i style="background:#e6a23c"></i>verify</span>
             <span><i style="background:#ef5f5f"></i>you must answer</span>
+          </div>
+          <div class="rev" id="fd-rev" style="display:none">
+            <div class="revq" id="fd-revq">field 1 of 1</div>
+            <div class="revl" id="fd-revl"></div>
+            <div class="revv" id="fd-revv"></div>
+            <div class="revb">
+              <button class="btn pri" id="fd-ry">Fill (Y)</button>
+              <button class="btn" id="fd-rn">Skip (N)</button>
+              <button class="btn" id="fd-ra">Fill the rest</button>
+              <button class="btn" id="fd-rs">Stop</button>
+            </div>
+          </div>
+          <div class="draft" id="fd-draft" style="display:none">
+            <pre id="fd-drafttxt"></pre>
+            <div class="revb">
+              <button class="btn" id="fd-dcopy">Copy letter</button>
+              <button class="btn pri" id="fd-dopen">Review in dashboard</button>
+            </div>
+            <div class="hint">A draft, not an answer: nothing is typed or attached until you
+            read it and approve the packet.</div>
           </div>
           <div class="log" id="fd-log"></div>
           <div class="sum" id="fd-sum" style="display:none"></div>
@@ -728,6 +831,12 @@
       $('fd-save').onclick = () => saveJob();
       $('fd-next').onclick = () => stepNext();
       $('fd-settings').onclick = () => chrome.runtime.sendMessage({ type: 'open-popup' });
+      $('fd-cover').onclick = () => draftCover();
+      $('fd-review').onclick = () => setReviewEach(!state.reviewEach);
+      $('fd-ry').onclick = () => ui.answerReview('fill');
+      $('fd-rn').onclick = () => ui.answerReview('skip');
+      $('fd-ra').onclick = () => ui.answerReview('all');
+      $('fd-rs').onclick = () => ui.answerReview('stop');
       $('fd-packet').onclick = async () => {
         const last = localStorage.getItem('filldesk_last_job');
         if (!last) return line({ kind: 'warn', text: 'save the job first' });
@@ -764,11 +873,47 @@
         if (on) btn.onclick = () => stop();
         else btn.onclick = () => run();
       },
-      summary(r, navAllowed) {
+      summary(r, navAllowed, undoable) {
         const sum = root.querySelector('#fd-sum');
         sum.style.display = 'block';
         sum.innerHTML = `<b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance) · <b>${r.unmatched}</b> unrecognised
-          <div class="hint">Nothing was submitted${r.review ? `, and <b>${r.review}</b> answer(s) were flagged <span style="color:#f0c48a">verify</span>` : ''}. Read the whole form — including collapsed sections — then submit it yourself${navAllowed ? '' : ' (navigation clicks are off)'}.</div>`;
+          <div class="hint">Nothing was submitted${r.review ? `, and <b>${r.review}</b> answer(s) were flagged <span style="color:#f0c48a">verify</span>` : ''}. Read the whole form — including collapsed sections — then submit it yourself${navAllowed ? '' : ' (navigation clicks are off)'}.</div>
+          <div class="hint"><b>You are responsible for everything you submit.</b> Check every answer against your actual situation before you press Submit.${undoable ? ' <button class="btn" id="fd-undo" style="margin-top:4px">Undo what FillDesk typed</button>' : ''}</div>`;
+        const undo = sum.querySelector('#fd-undo');
+        if (undo) undo.onclick = () => undoChanges();
+      },
+      review(item, index, total) {
+        const box = root.querySelector('#fd-rev');
+        const d = item.desc, dec = item.decision;
+        root.querySelector('#fd-revq').textContent = `field ${index} of ${total} · ${dec.action === 'upload' ? 'attach a document' : 'type'}`;
+        root.querySelector('#fd-revl').textContent = clipLabel(d);
+        root.querySelector('#fd-revv').textContent = dec.action === 'upload'
+          ? (dec.value === 'cover_letter' ? 'cover letter (.docx)' : 'your resume (.docx)')
+          : String(dec.value || '');
+        box.style.display = 'block';
+        return new Promise((resolve) => { reviewResolve = resolve; });
+      },
+      reviewOpen() { return !!reviewResolve; },
+      answerReview(choice) {
+        root.querySelector('#fd-rev').style.display = 'none';
+        const r = reviewResolve;
+        reviewResolve = null;
+        if (r) r(choice);
+      },
+      setReviewEach(on) {
+        const b = root.querySelector('#fd-review');
+        b.classList.toggle('on', !!on);
+        b.classList.toggle('off', !on);
+      },
+      showDraft(d, jobId) {
+        const box = root.querySelector('#fd-draft');
+        root.querySelector('#fd-drafttxt').textContent = d.text;
+        box.style.display = 'block';
+        box.querySelector('#fd-dcopy').onclick = async () => {
+          try { await navigator.clipboard.writeText(d.text); line({ kind: 'ok', text: 'cover letter copied to your clipboard' }); }
+          catch (e) { line({ kind: 'warn', text: 'copy blocked by the page — select it and copy manually' }); }
+        };
+        box.querySelector('#fd-dopen').onclick = () => window.open(`${state.server}/#job=${jobId}`, '_blank');
       },
       savedJob(job) {
         localStorage.setItem('filldesk_last_job', job.id);
@@ -794,6 +939,7 @@
     await loadConfig();
     const APP_LIKE = looksLikeApplication();
     if (IS_TOP && APP_LIKE) ui.mount();
+    if (localStorage.getItem('filldesk_review_each') === '1') { state.reviewEach = true; ui.setReviewEach(true); }
 
     if (!state.token) {
       ui.setHeader('add your token in the extension popup', false);

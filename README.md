@@ -63,6 +63,20 @@ start date, notice period, clearances, references.
   (you must answer). Multi-page forms get `Next page` — never `Submit`.
 - **Iframe-aware.** Fills every frame of the tab, because plenty of ATS forms are
   inside an iframe.
+- **Review one field at a time.** Switch on `Ask per field` in the panel and it stops
+  at every field: `Y` fills, `N` leaves it to you, `A` fills the rest, `Esc` stops. The
+  summary then lists what it did, with **Undo what FillDesk typed** to put the form back.
+- **A cover letter for the page you are on.** `Cover letter` drafts one from that
+  posting in the panel, or from the Jobs tab. It lands as a draft on the job record —
+  never in the autofill path — and the packet still has to be read and approved.
+- **Compliance claims are stripped out of drafts.** During testing a model read a home
+  town and a language and wrote "I am authorized to work in the United States without
+  sponsorship". Every drafted field — resume, letter, answers — is now scanned
+  sentence by sentence, any such statement is replaced with `[NEEDS INPUT]`, and the
+  dashboard shows you exactly what was removed and why. Those statements are yours.
+- **Imports, not re-typing.** `tools/import_skills.py` for a skills list, and
+  `tools/import_linkedin.py` for your own **LinkedIn data export** (Skills, positions,
+  education, About). FillDesk never logs into LinkedIn, or anything else, for you.
 - **Coverage you can measure.** Every run logs fields filled / unrecognised /
   refused per host into `data/events.jsonl`, and the dashboard shows it. If a site
   keeps producing unrecognised fields, that is the real coverage answer.
@@ -253,10 +267,27 @@ with tests. Highest-value next steps:
 3. Interview prep from the same packet, since the material is already there.
 4. Follow-up drafting (thank-yous, recruiter replies) from `data/jobs` status.
 
-## License / your data
+## Your data
 
 Your data stays in `./data` on this machine. The token in `data/api_token` guards
 that API; treat it like a password and never enable `FILLDESK_OPEN_API` on a shared
 machine. Notes, research and drafts you keep beside the code are yours: nothing is
 uploaded, and `tests/test_no_personal_data.py` scans git history for strings from
 your local profile so personal data cannot ride along when you publish.
+
+The one place your text leaves the machine is the model endpoint **you** configure —
+your provider's privacy terms apply there, and no key works without you typing it.
+
+## License and terms
+
+FillDesk is **proprietary**, not open source: `LICENSE.md` grants one person a
+perpetual license to use it, and `TERMS.md` covers the sale — one-time price,
+**non-refundable**, a 30-day limited warranty on top of an otherwise "as is" tool,
+support through public GitHub Issues, and this sentence, which is the whole product
+in one line:
+
+> **You are responsible for every answer, document, and application submission made
+> using FillDesk, and you should review each one before you press Submit.**
+
+Both files are plain language and short. The bracketed lines in `TERMS.md` (legal
+name, issue tracker URL, governing law, contact) need filling in before a sale.

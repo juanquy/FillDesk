@@ -2,6 +2,22 @@
 
 ## 0.1.0 — first release
 
+- **Ask-per-field review mode** in the extension: Y / N / A / Esc, plus *Undo what
+  FillDesk typed* after a run.
+- **Cover-letter draft from the page you are on** (`POST /api/jobs/<id>/draft_cover`).
+  Draft only: it lives on the job record and cannot reach the autofill engine.
+- **Compliance scrubbing of generated prose.** A model invented a work-authorization
+  claim from a home town; drafted resumes, letters and answers are now scanned
+  sentence by sentence, claims are replaced with `[NEEDS INPUT]`, and the removed
+  sentences are listed in the dashboard. Nine classes: work authorization,
+  attestations, criminal history, age, protected class, disability, veteran, health.
+- **Profile importers**: `tools/import_skills.py` (text lists) and
+  `tools/import_linkedin.py` (your own LinkedIn data export — never account access).
+- **Dashboard deep links** (`#packet=…`, `#job=…`) so panel buttons land somewhere.
+- `LICENSE.md` and `TERMS.md`: proprietary one-person perpetual license, non-refundable
+  sale, 30-day limited warranty, support via GitHub Issues, user responsible for
+  submissions.
+
 Local-first job application filler: one profile, a tailored packet per job, and a
 browser extension that types **only what you approved** and never submits.
 

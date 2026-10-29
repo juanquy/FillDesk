@@ -287,6 +287,21 @@ def r_job_capture(api: Api):
     return ok({**{k: v for k, v in job.items() if k != "description"}, "description_chars": len(desc)})
 
 
+@route("POST", "/api/jobs/<job_id>/draft_cover")
+def r_job_draft_cover(api: Api, job_id: str):
+    """Draft a cover letter for one saved job. Draft only: it is not approved, not a
+    packet, and the autofill engine will never type it."""
+    job = store.get_job(job_id)
+    if not job:
+        return fail("no such job", 404)
+    draft = packet_mod.draft_cover_letter(store.load_profile(), job)
+    job["draft_cover"] = draft
+    store.save_job(job)
+    store.log_event("cover_drafted", {"job_id": job_id, "method": draft["method"],
+                                      "words": draft["words"], "model": draft["model"]})
+    return ok(draft)
+
+
 @route("POST", "/api/questions/scan")
 def r_questions_scan(api: Api):
     """Classify questions the extension found on a live form."""

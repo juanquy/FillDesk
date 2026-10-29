@@ -489,6 +489,7 @@ ABSOLUTE RULES
 6. Cover letter: 180-260 words, addressed to the company by name, opening line specific and true, two evidence points drawn verbatim-in-fact from the profile, no preamble, no "Dear Hiring Manager" unless the company is unknown.
 7. Resume: single column, markdown, one page (~450-550 words), headings exactly: # NAME, ## Summary, ## Experience, ## Skills, ## Education. Keep every claim traceable to the profile.
 8. Answers to employer questions: 60-140 words each unless the question clearly wants a number or yes/no. Answer the question that was actually asked.
+9. Never state or imply the candidate's work authorization, citizenship, visa or sponsorship status, age, date of birth, health, disability, veteran status, race, ethnicity, religion, sex, sexual orientation, marital status, criminal record, or any certification/attestation -- not even if the profile seems to imply it (a home address or a language is NOT evidence of any of these). Those statements belong to the candidate alone. If a document genuinely needs one, write [NEEDS INPUT] there instead.
 
 Return ONLY a JSON object, no prose, matching exactly:
 {
@@ -570,6 +571,75 @@ def build_with_llm(profile: dict, job: dict, questions: list[str], settings: dic
     return out, cfg
 
 
+COVER_SYSTEM = """You write one cover letter for a real job application.
+
+Rules:
+1. Use only facts present in the candidate profile supplied. You may re-word and
+   re-order, never add an employer, a date, a tool, or a number that is not there.
+2. 180-260 words. Address the company by name. First line specific and true; no
+   "I am excited", "leverage", "spearhead", no adjective stacking, no preamble.
+3. Two pieces of evidence drawn from the profile, plain verbs, numbers where the
+   profile has them.
+4. If the profile is too thin to say anything true about this role, write the letter
+   anyway and put [NEEDS INPUT] where the missing fact belongs. Never invent it.
+5. Never state or imply work authorization, citizenship, visa or sponsorship status,
+   age, health, disability, veteran status, race, ethnicity, religion, sex, or an
+   attestation. A home town and a language are not evidence of any of them. If the
+   letter seems to need one, leave it out entirely.
+
+Return ONLY JSON: {"cover_letter": string, "note": string}
+"""
+
+
+def draft_cover_letter(profile: dict, job: dict, settings: dict | None = None) -> dict:
+    """A cover letter for one saved job, on its own, without building a whole packet.
+
+    This is a draft attached to the job record. It is deliberately NOT part of any
+    packet, so the autofill engine cannot type it: a packet still has to be built,
+    read and approved before anything reaches a form.
+    """
+    settings = settings or config.load_settings()
+    keywords = job_keywords(job)
+    cfg = llm.resolve(settings)
+    note, method = "", "rules"
+    text = ""
+    if cfg["provider"] != "none":
+        user = ("CANDIDATE PROFILE\n" + profile_brief(profile, 6000) + "\n\n" + job_brief(job, 5000)
+                + "\n\nKEYWORDS WORTH COVERING where genuinely true: " + ", ".join(keywords[:20]))
+        try:
+            raw = llm.complete(COVER_SYSTEM, user, expect_json=True, settings=settings)
+            if isinstance(raw, list):
+                raw = raw[0] if raw and isinstance(raw[0], dict) else {}
+            if isinstance(raw, dict):
+                text = str(raw.get("cover_letter") or "").strip()
+                note = str(raw.get("note") or "").strip()
+                method = "llm"
+        except Exception as exc:  # noqa: BLE001 - a failed draft must degrade, not 500
+            note = f"model unavailable ({str(exc)[:120]}); used the template instead."
+    if not text:
+        text = cover_letter_with_rules(profile, job, keywords)
+        method = "rules"
+        note = note or "Written from your saved profile with no model configured — read it and make it yours."
+    scrubbed = sensitive.redact_compliance_claims(text)
+    text = scrubbed["text"]
+    if scrubbed["redactions"]:
+        kinds = ", ".join(sorted({r["category"].replace("_", " ") for r in scrubbed["redactions"]}))
+        note = (note + " " if note else "") + (
+            f"Removed {len(scrubbed['redactions'])} compliance statement(s) the draft invented "
+            f"({kinds}). Only you can make those statements — add them yourself if they are true."
+        )
+    return {
+        "text": text,
+        "redactions": scrubbed["redactions"],
+        "words": resume_export.word_count(text),
+        "method": method,
+        "model": cfg.get("model") if method == "llm" else "",
+        "note": note,
+        "needs_review": True,
+        "drafted_at": store.now(),
+    }
+
+
 # --------------------------------------------------------------------------- assemble
 
 
@@ -600,6 +670,37 @@ def build_packet(job_id: str, extra_questions: list[str] | None = None, provider
     if missing_boiler:
         warnings.append("Empty boilerplate answers in your profile: " + ", ".join(str(b.get("label")) for b in missing_boiler[:6]))
 
+    # A model will infer compliance facts it was never told -- a town and a language
+    # became "authorized to work in the United States without sponsorship" in testing.
+    # Every drafted field is scrubbed before a human ever sees it; the marker left
+    # behind is the one the approval gate and the autofiller both refuse.
+    redactions: list[dict] = []
+
+    def scrub(text: str, where: str) -> str:
+        result = sensitive.redact_compliance_claims(text or "")
+        for item in result["redactions"]:
+            redactions.append({**item, "where": where})
+        return result["text"]
+
+    built["resume_markdown"] = scrub(built.get("resume_markdown", ""), "tailored resume")
+    built["cover_letter"] = scrub(built.get("cover_letter", ""), "cover letter")
+    for a in built["answers"]:
+        if a.get("blocked"):
+            continue
+        before = a.get("answer", "")
+        a["answer"] = scrub(before, f"answer to: {a['question'][:60]}")
+        if a["answer"] != before:  # the marker is a gap now, and must read as one
+            a["needs_input"] = True
+            a["confidence"] = min(float(a.get("confidence") or 0.0), 0.4)
+            a["note"] = (a.get("note") + " " if a.get("note") else "") + \
+                "A compliance statement was taken out of this answer; only you can say it."
+    if redactions:
+        kinds = ", ".join(sorted({r["category"].replace("_", " ") for r in redactions}))
+        warnings.append(
+            f"Removed {len(redactions)} compliance statement(s) the drafter invented ({kinds}). "
+            "They are yours to state, or to leave out — read the marked spots before approving."
+        )
+
     md = built["resume_markdown"]
     flags = resume_export.needs_input_flags(md + "\n" + built["cover_letter"] + "\n" + "\n".join(a["answer"] for a in built["answers"]))
     blocked = [a for a in built["answers"] if a.get("blocked")]
@@ -623,6 +724,7 @@ def build_packet(job_id: str, extra_questions: list[str] | None = None, provider
         "questions_found": len(questions),
         "keywords": built.get("keywords", [])[:30],
         "blocked_questions": [a["question"] for a in blocked],
+        "compliance_redactions": redactions[:20],
         "needs_input_flags": flags[:40],
         "warnings": warnings,
         "llm": {"provider": built.get("method", "rules"), "model": (built.get("llm") or {}).get("model", ""), "requested": cfg["provider"]},

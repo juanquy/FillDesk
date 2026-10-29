@@ -288,11 +288,13 @@ async function loadJobs() {
       <div class="muted" style="margin-bottom:8px">${esc(j.description_preview || '')}…</div>
       <div class="actions">
         <button data-act="build" class="primary">Build packet</button>
+        <button data-act="cover">${j.draft_cover ? 'Cover letter ✓' : 'Cover letter'}</button>
         <button data-act="view">Read full</button>
         ${j.url ? `<a class="btnlike" href="${esc(j.url)}" target="_blank" rel="noopener noreferrer">Open posting</a>` : ''}
         <button data-act="del">Delete</button>
       </div>`;
     el.querySelector('[data-act=build]').onclick = () => buildPacket({ job_id: j.id }, el.querySelector('[data-act=build]'));
+    el.querySelector('[data-act=cover]').onclick = async (ev) => coverAction(ev.currentTarget, j);
     el.querySelector('[data-act=view]').onclick = async () => {
       const full = await api('/api/jobs/' + j.id);
       modal(`${full.title} — ${full.company}`, `<div class="muted" style="margin-bottom:10px">${esc(full.url)}</div>
@@ -305,6 +307,64 @@ async function loadJobs() {
     host.appendChild(el);
   }
 }
+
+// A cover letter drafted from one saved job. It lives on the job record, not in a
+// packet, so the autofill engine cannot reach it: review and approval still gate it.
+async function coverAction(btn, job) {
+  if (job.draft_cover) return showCoverDraft(job);
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Writing…';
+  try {
+    job.draft_cover = await api(`/api/jobs/${job.id}/draft_cover`, { method: 'POST', json: {} });
+    btn.textContent = 'Cover letter ✓';
+    showCoverDraft(job);
+    toast('Draft written. Nothing is used until you approve a packet.', 'ok');
+  } catch (e) {
+    toast(e.message, 'err'); btn.textContent = label;
+  } finally { btn.disabled = false; }
+}
+
+function showCoverDraft(job) {
+  const d = job.draft_cover;
+  if (!d) return toast('No draft for this job yet.', 'warn');
+  modal(`Cover letter — ${job.title || job.company || 'draft'}`, `
+    <div class="muted" style="margin-bottom:10px">${d.words} words · written with ${esc(d.method === 'llm' ? 'your model (' + (d.model || '') + ')' : 'no model, from your profile only')} · ${(d.drafted_at || '').slice(0, 16).replace('T', ' ')}</div>
+    ${d.note ? `<div class="badge warn" style="margin-bottom:10px">${esc(d.note)}</div>` : ''}
+    <pre style="white-space:pre-wrap;font-size:12.5px;line-height:1.5">${esc(d.text)}</pre>
+    <div class="actions" style="margin-top:12px">
+      <button id="m-copy">Copy</button>
+      <button id="m-rewrite">Rewrite it</button>
+      <button class="primary" id="m-build">Build the packet</button>
+    </div>
+    <p class="muted" style="margin-top:10px">A draft is not an answer: it is never typed or uploaded
+    until you build a packet, read it, and approve it.</p>`);
+  $('#m-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(d.text); toast('Copied.', 'ok'); }
+    catch (e) { toast('Copy blocked — select the text and copy manually.', 'warn'); }
+  };
+  $('#m-rewrite').onclick = async () => {
+    $('#modal-body').querySelector('pre').textContent = 'writing…';
+    job.draft_cover = await api(`/api/jobs/${job.id}/draft_cover`, { method: 'POST', json: {} });
+    showCoverDraft(job);
+  };
+  $('#m-build').onclick = () => { $('#modal').classList.add('hidden'); buildPacket({ job_id: job.id }); };
+}
+
+// Deep links from the extension: /#packet=pkt_1 opens that packet, /#job=job_1 its draft.
+async function followHash() {
+  const [key, value] = (location.hash || '').replace(/^#/, '').split('=');
+  if (!value) return;
+  try {
+    if (key === 'packet') { showPanel('#tab-packets'); await loadPackets(); await openPacket(value); }
+    if (key === 'job') {
+      showPanel('#tab-jobs');
+      const { jobs } = await api('/api/jobs');
+      const job = jobs.find((j) => j.id === value);
+      if (job) { loadJobs(); showCoverDraft(job); }
+    }
+  } catch (e) { toast(e.message, 'err'); }
+}
+window.addEventListener('hashchange', followHash);
 
 $('#j-add').onclick = async () => {
   const payload = {
@@ -376,6 +436,7 @@ async function openPacket(id) {
     <span class="badge ${CURRENT.approved ? 'ok' : 'warn'}">${CURRENT.approved ? 'approved — extension may use it' : 'not approved'}</span>`;
   $('#pd-warnings').innerHTML = (CURRENT.warnings || []).length
     ? `<div class="notice">${CURRENT.warnings.map(esc).join('<br>')}</div>` : '';
+  renderRedactions();
   $('#pd-resume').value = CURRENT.resume.markdown || '';
   $('#pd-cover').value = CURRENT.cover_letter.text || '';
   $('#pd-words').textContent = (CURRENT.cover_letter.words || 0) + ' words';
@@ -389,6 +450,20 @@ async function openPacket(id) {
   $('#pd-dl-docx').href = base + '?fmt=docx';
   $('#pd-dl-html').href = base + '?fmt=html';
   $('#pd-dl-cover').href = base + '?fmt=docx&type=cover';
+}
+
+// What the drafter tried to claim about compliance, and we took out. Shown first,
+// because the honest fix is a person deciding whether to say it themselves.
+function renderRedactions() {
+  const red = (CURRENT && CURRENT.compliance_redactions) || [];
+  const host = $('#pd-redactions');
+  if (!host) return;
+  if (!red.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="notice" style="border-left:3px solid #ef5f5f">
+    <strong>${red.length} compliance statement${red.length > 1 ? 's' : ''} the drafter invented ${red.length > 1 ? 'were' : 'was'} removed</strong>
+    <ul style="margin:6px 0 0 18px">${red.map((r) => `<li><b>${esc(String(r.category).replace(/_/g, ' '))}</b> in ${esc(r.where)}:
+      &ldquo;${esc(r.sentence)}&rdquo; — ${esc(r.why)}</li>`).join('')}</ul>
+    Statements like these are yours alone. Say them yourself, in your own words, only if they are true.</div>`;
 }
 
 function renderPreview() { $('#pd-preview').innerHTML = mdToHtml($('#pd-resume').value); }
@@ -545,4 +620,5 @@ $('#s-copy').onclick = async () => {
 (async function boot() {
   await loadProfile().catch((e) => toast('profile: ' + e.message, 'err'));
   loadStatus();
+  followHash();
 })();

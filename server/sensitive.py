@@ -127,3 +127,96 @@ def scan_questions(questions: list[str]) -> dict:
             continue
         out["answerable"].append(normalize(q))
     return out
+
+
+# ------------------------------------------------------- generated prose
+#
+# The field matcher refuses the *work authorization* box. That is not enough: a
+# model writing a cover letter will happily infer one. Given a town and a native
+# language, a real model produced "I am authorized to work in the United States
+# without sponsorship" -- a legal representation, invented, in a document that
+# gets uploaded to an employer. So generated prose is scanned sentence by sentence
+# and any such statement is replaced with a marker the reviewer has to resolve.
+#
+# Tier A fires anywhere. Tier B only where the sentence is about the candidate,
+# so "disabled features in the legacy console" survives and "I am a veteran" does not.
+_PROSE_CLAIMS: list[tuple[str, str, str, bool]] = [
+    ("work_authorization",
+     r"(authoriz\w*|authoris\w*|eligib\w*|entitled) to work|without (a )?sponsorship|"
+     r"no need for sponsorship|sponsorship (is not|required|isn.t needed|not needed)|require(s)? sponsorship|"
+     r"\bu\.?s\.? citizen(ship)??|united states citizen(ship)??|permanent resident|green card|"
+     r"work (permit|authorisation|authorization)|employment authorization document|\bead\b|"
+     r"\b(h-?1b|tn|e-?3|o-?1|opt|cpt|stem opt|l-?1|f-?1) (visa|status)|visa (status|sponsorship)|"
+     r"legally (allowed|permitted) to work",
+     "work authorization, citizenship and sponsorship are statements only you can make", True),
+    ("legal_declaration",
+     r"i certify|i attest|i hereby (certify|declare|state|acknowledge)|declare under penalty|"
+     r"i affirm that|this is a true and complete (statement|declaration)",
+     "attestations and declarations must be your own words, chosen by you", False),
+    ("criminal",
+     r"no criminal record|clean criminal record|no felony|not been arrested|no convictions?|"
+     r"never been (arrested|charged|convicted)|will (pass|clear) a background check",
+     "criminal-history and background-check claims are never drafted", False),
+    ("age",
+     r"born in (19|20)\d{2}|my date of birth|i was born|\bi am \d{2} years old|\bage of \d{2}\b",
+     "age and date of birth are never drafted", False),
+    ("protected_class",
+     r"my (race|ethnicity|religion|gender|nationality|creed|pronouns|sexual orientation)|"
+     r"i am (a |an )?(man|woman|male|female|christian|muslim|jewish|hindu|buddhist|atheist|catholic|sikh)|"
+     r"i am (gay|lesbian|bisexual|transgender|non-?binary)|i am (married|single|divorced)|my marital status",
+     "protected-class identity is never stated on your behalf", False),
+    ("disability",
+     r"my (disability|medical condition|diagnosis)|i (have|live with) (a )?(disability|condition|autism|adhd|dyslexia)|"
+     r"need(s)? (a )?reasonable accommodation|i am (blind|deaf|wheelchair)",
+     "disability and accommodation requests are yours to make", False),
+    ("veteran",
+     r"i am a (protected )?veteran|my veteran status|honourabl(y|e) discharged|my discharge (status|type)",
+     "veteran status is self-declared, never drafted", False),
+    ("health",
+     r"my (health|medical history)|i (take|use) (daily )?(medication|insulin)|workers[- ]?comp|"
+     r"i am a non-?smoker|clean drug (test|screen)",
+     "health information is never drafted", False),
+]
+
+_FIRST_PERSON = re.compile(r"\b(i|my|me|myself|as a candidate|as your candidate)\b", re.I)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?:])[\s\n]+")
+_WHY = {c: why for c, _p, why, _a in _PROSE_CLAIMS}
+_PROSE_COMPILED = [(c, re.compile(p, re.I), why, tier_a) for c, p, why, tier_a in _PROSE_CLAIMS]
+
+
+def split_sentences(text: str) -> list[str]:
+    return [s.strip() for s in _SENTENCE_SPLIT.split(text or "") if s.strip()]
+
+
+def compliance_claims(text: str) -> list[dict]:
+    """Sentences in drafted prose that state something this tool must never state."""
+    out: list[dict] = []
+    for sentence in split_sentences(text):
+        probe = normalize(sentence)
+        if _SAFE_CONTEXT.search(probe):
+            continue
+        first_person = bool(_FIRST_PERSON.search(probe))
+        for category, pattern, why, tier_a in _PROSE_COMPILED:
+            if not tier_a and not first_person:
+                continue
+            if pattern.search(probe):
+                out.append({"category": category, "sentence": sentence, "why": why})
+                break
+    return out
+
+
+def redact_compliance_claims(text: str) -> dict:
+    """Swap each compliance assertion for a [NEEDS INPUT] marker.
+
+    The marker is the same token the rest of the product already refuses to autofill
+    and refuses to approve without force, so a drafted compliance claim cannot reach a
+    form on any path -- it has to be read and resolved by a person first.
+    """
+    claims = compliance_claims(text)
+    if not claims:
+        return {"text": text, "redactions": []}
+    clean = text
+    for c in claims:
+        marker = f"[NEEDS INPUT] {c['category'].replace('_', ' ')}: {c['why']}."
+        clean = clean.replace(c["sentence"], marker)
+    return {"text": clean.strip(), "redactions": claims}

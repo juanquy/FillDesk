@@ -292,6 +292,8 @@ def save_job(job: dict) -> dict:
         "tags": job.get("tags", []),
         "notes": job.get("notes", ""),
         "status": job.get("status", "saved"),  # saved|packet|autofilled|submitted|rejected
+        # A cover-letter draft is not a packet: nothing here is ever autofilled.
+        "draft_cover": job.get("draft_cover") or None,
     }
     _write_json(config.JOBS_DIR / f"{job_id}.json", record)
     return record

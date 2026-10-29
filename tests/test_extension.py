@@ -145,8 +145,78 @@ class DashboardTests(unittest.TestCase):
         js = (WEB / "app.js").read_text()
         ids_in_js = set(re.findall(r"\$\('#([\w-]+)'\)", js))
         ids_in_html = set(re.findall(r'id="([\w-]+)"', html))
-        missing = sorted(ids_in_js - ids_in_html)
+        # Some ids only exist inside a modal that app.js builds itself. An id is
+        # exempt only when app.js literally writes it, so a typo still fails here.
+        ids_written_by_js = set(re.findall(r'id="([\w-]+)"', js))
+        missing = sorted(ids_in_js - ids_in_html - ids_written_by_js)
         self.assertFalse(missing, f"app.js binds ids that the dashboard does not define: {missing}")
+
+
+class HumanInTheLoopTests(unittest.TestCase):
+    """The features that exist purely to keep a person deciding: per-field review,
+    undo, the live cover-letter draft, and the responsibility line at the gate.
+
+    Assertions use assertTrue so a failure prints one line instead of a whole file.
+    """
+
+    def setUp(self):
+        self.content = (EXT / "content.js").read_text()
+        self.index = (WEB / "index.html").read_text()
+        self.dash = (WEB / "app.js").read_text()
+
+    def has(self, haystack, needle, why):
+        self.assertTrue(needle in haystack, why)
+
+    def test_review_mode_controls_exist(self):
+        for el in ("fd-review", "fd-rev", "fd-ry", "fd-rn", "fd-ra", "fd-rs"):
+            self.has(self.content, f'id="{el}"', f"{el} missing from the panel")
+            self.assertTrue(f"$('{el}')" in self.content or f"'#{el}'" in self.content,
+                            f"{el} is never wired up")
+
+    def test_review_mode_can_only_fill_skip_fillrest_stop(self):
+        gate = self.content[self.content.index("if (state.reviewEach && !state.reviewAll)"):]
+        for choice in ("'skip'", "'stop'", "'all'"):
+            self.has(gate[:900], choice, f"no handling for {choice}")
+        self.has(gate[:900], "state.cancelled = true", "Stop must cancel the run")
+
+    def test_review_shortcuts_ignore_fields_being_typed_in(self):
+        handler = self.content[self.content.index("addEventListener('keydown'"):]
+        self.has(handler[:600], "isContentEditable", "shortcuts must not eat keystrokes in a form field")
+        for key in ("y: 'fill'", "n: 'skip'", "a: 'all'", "escape: 'stop'"):
+            self.has(handler[:700], key, f"missing shortcut {key}")
+
+    def test_typed_values_can_be_taken_back(self):
+        self.has(self.content, "state.changes.push", "no log of what was typed")
+        self.has(self.content, "function undoChanges", "no undo")
+        self.has(self.content, "fd-undo", "undo is not offered in the summary")
+
+    def test_responsibility_is_stated_where_the_decisions_are_made(self):
+        self.has(self.content, "responsible for everything you submit",
+                 "the extension panel must say who is answerable")
+        self.has(self.index, "responsible for everything you submit",
+                 "the dashboard approval bar must say who is answerable")
+
+    def test_cover_letter_draft_is_offered_but_gated(self):
+        self.has(self.content, "/draft_cover", "the panel cannot draft a cover letter")
+        for el in ("fd-cover", "fd-draft", "fd-dcopy", "fd-dopen"):
+            self.has(self.content, f'id="{el}"', f"{el} missing")
+        self.has(self.dash, "A draft is not an answer",
+                 "the dashboard must say a draft is not usable yet")
+        self.has(self.dash, "function showCoverDraft", "no draft viewer in the dashboard")
+
+    def test_draft_endpoint_exists_and_a_draft_is_not_a_packet(self):
+        server = (ROOT / "server" / "app.py").read_text()
+        self.has(server, '@route("POST", "/api/jobs/<job_id>/draft_cover")', "no draft endpoint")
+        packet = (ROOT / "server" / "packet.py").read_text()
+        body = packet[packet.index("def draft_cover_letter"):]
+        self.assertTrue("snapshot" not in body.split("def ")[0],
+                        "a draft must never be written into an autofill snapshot")
+
+    def test_extension_links_resolve_in_the_dashboard(self):
+        self.has(self.content, "#packet=", "panel should deep-link to a packet")
+        self.has(self.content, "#job=", "panel should deep-link to a job draft")
+        self.has(self.dash, "async function followHash", "dashboard ignores those links")
+        self.has(self.dash, "addEventListener('hashchange'", "no hashchange handling")
 
 
 if __name__ == "__main__":

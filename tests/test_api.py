@@ -51,20 +51,25 @@ def call(method, path, payload=None, token=True, raw=False, origin=None, ctype="
     return code, json.loads(raw_bytes.decode() or "{}")
 
 
+# One server for the whole module: unittest runs classes in alphabetical order, and
+# a second class that also talks HTTP needs it up regardless of where it sits.
+_SERVER = None
+
+
+def setUpModule():
+    global _SERVER
+    _SERVER = app_mod.make_server("127.0.0.1", PORT)
+    threading.Thread(target=_SERVER.serve_forever, daemon=True).start()
+
+
+def tearDownModule():
+    if _SERVER:
+        _SERVER.shutdown()
+        _SERVER.server_close()
+    shutil.rmtree(_TMP, ignore_errors=True)
+
+
 class ApiTests(unittest.TestCase):
-    server = None
-
-    @classmethod
-    def setUpClass(cls):
-        cls.server = app_mod.make_server("127.0.0.1", PORT)
-        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
-        cls.thread.start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.shutdown()
-        cls.server.server_close()
-        shutil.rmtree(_TMP, ignore_errors=True)
 
     # ------------------------------------------------------------------ auth
     def test_00_token_required_for_extension_origin(self):
@@ -325,6 +330,45 @@ class ApiTests(unittest.TestCase):
         pid = res["id"]
         code, body = call("GET", f"/api/packets/{pid}/file?fmt=docx")
         self.assertEqual(code, 423, body)
+
+    def test_24_cover_draft_is_never_autofillable(self):
+        """The extension can ask for a cover letter for one job. That draft lives on
+        the job record and must never reach an autofill snapshot."""
+        code, job = call("POST", "/api/jobs", {
+            "url": "https://example.com/jobs/it-ops-lead",
+            "title": "IT Operations Lead",
+            "company": "Northwind Traders",
+            "description": (
+                "Northwind Traders is hiring an IT Operations Lead to run Microsoft 365, Entra ID and "
+                "Intune for 900 users, own endpoint compliance, and drive security policy across a hybrid "
+                "estate. Tell us about your Microsoft 365 administration and Intune rollout experience. "
+                "Why Northwind Traders? "
+                "Are you legally authorized to work in the United States without sponsorship?"
+            ) * 2,
+        })
+        self.assertEqual(code, 200, job)
+        jid = job["id"]
+
+        code, draft = call("POST", f"/api/jobs/{jid}/draft_cover", {})
+        self.assertEqual(code, 200, draft)
+        self.assertEqual(draft["method"], "rules", "tests must not need a model")
+        self.assertTrue(draft["needs_review"], "a draft is never a finished answer")
+        self.assertGreater(draft["words"], 40)
+        self.assertIn("Northwind Traders", draft["text"])
+        self.assertNotIn("Are you legally authorized", draft["text"], "the job question is not an answer")
+
+        code, saved = call("GET", f"/api/jobs/{jid}")
+        self.assertEqual(saved["draft_cover"]["words"], draft["words"])
+        code, listing = call("GET", "/api/jobs")
+        mine = [j for j in listing["jobs"] if j["id"] == jid][0]
+        self.assertTrue(mine.get("draft_cover"), "the jobs list shows a draft is on file")
+
+        # A draft must never appear in what the extension is allowed to type.
+        code, snap = call("GET", "/api/autofill/snapshot", origin="chrome-extension://abcdef")
+        if code == 200:
+            self.assertNotIn(draft["text"][:70], json.dumps(snap))
+        code, missing = call("POST", "/api/jobs/job_does_not_exist/draft_cover", {})
+        self.assertEqual(code, 404)
 
     def test_30_docx_export_roundtrips(self):
         from server import resume_parse
@@ -679,6 +723,122 @@ class RulesTests(unittest.TestCase):
         self.assertIsNone(sensitive.blocked_reason("We offer visa sponsorship for this role"))
         self.assertIsNone(sensitive.blocked_reason("Our supplier diversity program supports veteran-owned businesses"))
         self.assertIsNotNone(sensitive.blocked_reason("Are you legally authorized to work in the US?"))
+
+
+class GeneratedProseIsScrubbed(unittest.TestCase):
+    """A model that *infers* a compliance fact must not be able to write it.
+
+    In real testing a model looked at a home town and a language and produced "I am
+    authorized to work in the United States without sponsorship" -- a legal
+    representation, invented, in a document uploaded to an employer. The field
+    matcher would refuse that box; the prose is the same line. So every drafted
+    field is scrubbed, and what is left behind is the marker the approval gate and
+    the autofiller both refuse.
+    """
+
+    CLAIM = "I am authorized to work in the United States without sponsorship."
+    COVER = ("I am applying for the Senior Systems Engineer role at Northbridge Systems. "
+             + CLAIM + " I led a Microsoft 365 and Intune rollout for 2,400 users.")
+    RESUME = ("# Alex Rivera\n\n## Summary\nAlex Rivera is authorized to work in the United States "
+              "without sponsorship and runs Microsoft 365 estates.\n\n## Experience\n"
+              "- Led an Intune rollout for 2,400 users.\n\n## Skills\n- Entra ID\n\n## Education\n- BS\n")
+
+    def setUp(self):
+        from server import llm
+        self.llm = llm
+        self.saved = {k: os.environ.get(k) for k in
+                      ("FILLDESK_LLM_PROVIDER", "FILLDESK_LLM_API_KEY", "FILLDESK_LLM_MODEL", "FILLDESK_LLM_BASE_URL")}
+        os.environ.update({"FILLDESK_LLM_PROVIDER": "openai", "FILLDESK_LLM_API_KEY": "test-key",
+                           "FILLDESK_LLM_MODEL": "evil-test-model", "FILLDESK_LLM_BASE_URL": "http://127.0.0.1:1"})
+        self._complete = llm.complete
+
+    def tearDown(self):
+        self.llm.complete = self._complete
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    QUESTIONS = ["Why Northbridge Systems?", "Do you consent to a background check?",
+                 "Are you authorized to work in the United States without sponsorship?"]
+
+    def _job(self, path):
+        code, job = call("POST", "/api/jobs", {
+            "url": "https://jobs.northbridge.example/sse-" + path,
+            "title": "Senior Systems Engineer", "company": "Northbridge Systems",
+            "location": "Remote (US)",
+            "description": ("Northbridge Systems is hiring a Senior Systems Engineer for a 2,400-user "
+                            "Microsoft 365, Entra ID and Intune estate. Why Northbridge Systems? "
+                            "Are you authorized to work in the United States without sponsorship?") * 3,
+            "questions": self.QUESTIONS,
+        })
+        self.assertEqual(code, 200, job)
+        return job["id"]
+
+    def test_cover_draft_loses_an_invented_work_authorization_claim(self):
+        self.llm.complete = lambda *a, **k: {"cover_letter": self.COVER, "note": "inferred from profile"}
+        jid = self._job("draft")
+        code, draft = call("POST", f"/api/jobs/{jid}/draft_cover", {})
+        self.assertEqual(code, 200, draft)
+        self.assertNotIn("authorized to work", draft["text"].lower())
+        self.assertIn("[NEEDS INPUT]", draft["text"])
+        self.assertIn("Northbridge", draft["text"], "the true parts must survive")
+        self.assertIn("Intune", draft["text"])
+        cats = [r["category"] for r in draft["redactions"]]
+        self.assertEqual(cats, ["work_authorization"])
+        self.assertIn("Only you can make those statements", draft["note"])
+
+    def test_packet_scrubs_resume_letter_and_answers(self):
+        answers = [
+            {"question": "Why Northbridge Systems?",
+             "answer": "Your 2,400-user estate is the scale I run. I certify that all information above is true.",
+             "source": "inferred", "confidence": 0.8},
+            {"question": "Do you consent to a background check?",
+             "answer": "Yes, happy to.", "source": "inferred", "confidence": 0.8},
+        ]
+        payload = {"resume_markdown": self.RESUME, "resume_changes": ["trimmed"],
+                   "cover_letter": self.COVER, "answers": answers}
+        self.llm.complete = lambda *a, **k: payload
+        jid = self._job("packet")
+        code, packet = call("POST", "/api/packets", {"job_id": jid})
+        self.assertEqual(code, 200, packet)
+
+        joined = packet["resume"]["markdown"] + packet["cover_letter"]["text"] + \
+            " ".join(a["answer"] for a in packet["answers"])
+        self.assertNotIn("authorized to work", joined.lower(), "a compliance claim survived into a document")
+        self.assertNotIn("I certify", joined)
+        cats = {r["category"] for r in packet["compliance_redactions"]}
+        self.assertIn("work_authorization", cats)
+        self.assertIn("legal_declaration", cats)
+        wheres = {r["where"] for r in packet["compliance_redactions"]}
+        self.assertTrue(any("resume" in w for w in wheres) and any("cover" in w for w in wheres),
+                        f"expected both documents flagged, got {wheres}")
+        self.assertTrue(any(w.startswith("answer to") for w in wheres),
+                        f"an answer's claim must be caught too, got {wheres}")
+        self.assertTrue(packet["needs_input_flags"], "the marker must count as an open item")
+        self.assertTrue(any("compliance" in w.lower() for w in packet["warnings"]))
+
+        # and it cannot be approved quietly, nor typed even if forced
+        code, unapproved = call("POST", f"/api/packets/{packet['id']}/approve", {})
+        self.assertEqual(code, 200, unapproved)
+        self.assertFalse(unapproved["approved"], "an invented compliance claim leaves an open item")
+        self.assertTrue(unapproved["flags"], "the open item should be listed for the reviewer")
+        code, forced = call("POST", f"/api/packets/{packet['id']}/approve", {"force": True})
+        self.assertEqual(code, 200, forced)
+        code, snap = call("GET", "/api/autofill/snapshot", {"packet_id": packet["id"]}, origin="chrome-extension://abcdef")
+        if code != 200:
+            code, snap = call("GET", f"/api/autofill/snapshot?packet_id={packet['id']}",
+                              origin="chrome-extension://abcdef")
+        self.assertEqual(code, 200, snap)
+        blob = " ".join(str(a.get("answer", "")) for a in snap.get("answers", []))
+        self.assertNotIn("authorized to work", blob.lower())
+        for a in snap.get("answers", []):
+            if "[NEEDS INPUT]" in str(a.get("answer", "")):
+                self.assertTrue(a.get("needs_input"), "a marker must never be typed as an answer")
+        self.assertNotIn("authorized to work", json.dumps(snap.get("identity", {})).lower())
+        call("DELETE", f"/api/packets/{packet['id']}")
+        call("DELETE", f"/api/jobs/{jid}")
 
 
 if __name__ == "__main__":
