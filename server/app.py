@@ -450,6 +450,13 @@ def r_autofill_snapshot(api: Api):
     if not p.get("approved"):
         return fail(f"packet {p['id']} is not approved", 423)
     snap = dict(p.get("profile_snapshot") or {})
+    # A safety rule about what may be typed has to reach packets approved before the rule
+    # existed, or the fix only protects new work. Snapshots are versioned, and a stale one
+    # is rebuilt from the packet on the way out.
+    if snap.get("version") != packet_mod.SNAPSHOT_VERSION:
+        refreshed = packet_mod.refresh_snapshot(p["id"])
+        if refreshed:
+            snap = dict(refreshed.get("profile_snapshot") or {})
     snap["approved"] = True
     snap["ats_hint"] = api.q("host", "")
     return ok(snap)

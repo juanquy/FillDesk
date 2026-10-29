@@ -24,7 +24,8 @@ import sys  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import app as app_mod  # noqa: E402
-from server import config, store  # noqa: E402
+from server import config, store
+from server import packet as packet_mod  # noqa: E402
 
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
@@ -869,6 +870,74 @@ class RecoverableRecords(unittest.TestCase):
         for i in range(store.KEEP_BACKUPS + 20):
             store.save_job({"id": job["id"], "title": "v%d" % i, "company": "Initech"})
         self.assertLessEqual(len(store.recoverable_backups(job["id"])), store.KEEP_BACKUPS)
+
+
+class UnverifiedAnswersStayHome(unittest.TestCase):
+    """Approval is a checkbox, not a string match. The first rule was "skip anything
+    containing [NEEDS INPUT]", which held until a real user typed his own answer, left the
+    box unticked, force-approved, and sent unreviewed prose toward a real employer."""
+
+    def _packet(self):
+        _code, job = call("POST", "/api/jobs", {"title": "Infrastructure Engineer", "company": "Linear",
+                                                "description": "Runs the platform. " * 30,
+                                                "questions": ["Describe your experience with Kubernetes."]}, token=True)
+        _code, packet = call("POST", "/api/packets", {"job_id": job["id"]}, token=True)
+        return job, packet
+
+    def _set_answer(self, packet, text, verified):
+        answers = packet.get("answers") or []
+        answers[0]["answer"] = text
+        answers[0]["needs_input"] = not verified
+        _code, updated = call("PUT", "/api/packets/" + packet["id"], {"answers": answers}, token=True)
+        return updated
+
+    def _snapshot(self, packet_id=None):
+        # Ask for this packet by id: the default endpoint picks the newest approved one,
+        # and two packets approved in the same second would make the answer flaky.
+        path = "/api/autofill/snapshot" + ("?packet_id=" + packet_id if packet_id else "")
+        with urllib.request.urlopen(urllib.request.Request(BASE + path), timeout=10) as resp:
+            return json.loads(resp.read())
+
+    def test_an_unverified_answer_is_not_offered_to_the_extension(self):
+        _job, packet = self._packet()
+        packet = self._set_answer(packet, "I have no experience", verified=False)
+        call("POST", "/api/packets/%s/approve" % packet["id"], {"force": True}, token=True)
+        snap = self._snapshot(packet['id'])
+        typed = json.dumps(snap.get("answers", []))
+        self.assertNotIn("I have no experience", typed, "an answer nobody verified is offered for typing")
+        self.assertIn(packet["answers"][0]["question"], snap.get("unverified_questions", []),
+                      "the withheld answer must be named, not silently missing")
+
+    def test_ticking_verified_releases_it(self):
+        _job, packet = self._packet()
+        packet = self._set_answer(packet, "Nine years of Proxmox and Incus; Kubernetes in anger for two.",
+                                  verified=True)
+        call("POST", "/api/packets/%s/approve" % packet["id"], {"force": True}, token=True)
+        snap = self._snapshot(packet["id"])
+        self.assertIn("Nine years of Proxmox", json.dumps(snap.get("answers", [])))
+        self.assertEqual(snap.get("unverified_questions", []), [])
+
+    def test_marker_text_is_still_never_typed(self):
+        _job, packet = self._packet()
+        packet = self._set_answer(packet, "[NEEDS INPUT] write this yourself", verified=True)
+        # verified=True cannot put marker text back in: the server re-checks the text too
+        call("POST", "/api/packets/%s/approve" % packet["id"], {"force": True}, token=True)
+        snap = self._snapshot(packet["id"])
+        self.assertNotIn("[NEEDS INPUT]", json.dumps(snap.get("answers", [])))
+
+    def test_packets_approved_before_the_rule_are_rebuilt(self):
+        # A stored snapshot from before this rule would keep offering the old answer set,
+        # so the fix would protect only new packets. Version mismatch means rebuild now.
+        _job, packet = self._packet()
+        packet = self._set_answer(packet, "stale snapshot probe", verified=False)
+        call("POST", "/api/packets/%s/approve" % packet["id"], {"force": True}, token=True)
+        stored = store.get_packet(packet["id"])
+        stored["profile_snapshot"]["version"] = 1
+        stored["profile_snapshot"]["answers"] = [{"question": "x", "key": "x", "answer": "stale snapshot probe"}]
+        store.save_packet(stored)
+        snap = self._snapshot(packet["id"])
+        self.assertEqual(snap.get("version"), packet_mod.SNAPSHOT_VERSION, "the stale snapshot was served as-is")
+        self.assertNotIn("stale snapshot probe", json.dumps(snap.get("answers", [])))
 
 
 class GeneratedProseIsScrubbed(unittest.TestCase):

@@ -459,6 +459,22 @@ class LabelledFieldsAlign(unittest.TestCase):
         self.assertGreaterEqual(control_x[0] - label_x[0], 120, "the label column is too narrow to hold a label")
 
 
+class UnverifiedAnswersExplained(unittest.TestCase):
+    """The server withholds answers the human never confirmed. If the extension then says
+    "unrecognised", the user hunts for a matching bug instead of ticking the box."""
+
+    def test_the_panel_says_why_the_field_is_empty(self):
+        content = (EXT / "content.js").read_text()
+        self.assertIn("unverified_questions", content, "the panel never reads the withheld list")
+        self.assertIn("function flagUnverified", content, "no link between a withheld answer and its field")
+        self.assertIn("did not verify", content, "the user is not told what to do about it")
+        self.assertIn("answer unverified", content, "the fill run does not count them separately")
+        guard = content[content.index("function flagUnverified"):]
+        guard = guard[:guard.index("\n  }")]
+        self.assertIn("!== 'skip'", guard, "only untouched fields should be checked")
+        self.assertRegex(guard, r"q\.length < \d+", "a short label would match every question")
+
+
 class ErrorsReachTheUser(unittest.TestCase):
     """chrome://extensions is the wrong place to discover a failure: it is a page you
     have to navigate to, and it keeps old entries, so a fixed build can still look

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.8 — an answer you did not verify is never typed
+Approval is the "I have verified this" checkbox, so that checkbox now decides what the
+extension may type. Two holes were closed. A forced approval used to release answers that
+were still flagged open, because the guard was a search for the literal text
+`[NEEDS INPUT]` — write your own sentence, forget the box, and unreviewed prose headed for
+a real employer. And an answer carrying placeholder text but ticked verified reached the
+browser in the snapshot. Both are withheld server-side now, listed as
+`unverified_questions`, and the panel names the count instead of reporting the field as
+unrecognised.
+
+Snapshots are versioned (`SNAPSHOT_VERSION`) and rebuilt on read when a packet was approved
+under an older rule, so a safety fix reaches work you approved before it existed.
+
 ## 0.1.7 — jobs and packets are recoverable
 Replacing or deleting a job or packet now writes a timestamped copy to
 `data/backups/` first, capped at 40 per record, and `tools/recover.py` lists them and puts

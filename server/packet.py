@@ -763,6 +763,11 @@ def _norm_key(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", (text or "").lower()).strip()
 
 
+SNAPSHOT_VERSION = 3  # bump when the rules for "may be typed" change; see r_autofill_snapshot
+NEEDS_INPUT_MARK = "[needs input]"  # withheld on the flag AND in the text: a ticked box with
+                              # placeholder prose inside is still a hole in the review
+
+
 def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
     """Exactly what the browser extension is allowed to type into a form.
 
@@ -770,9 +775,18 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
     the profile: what you approved is what gets typed.
     """
     answers = []
+    unverified: list[str] = []
     for a in packet.get("answers", []):
         if a.get("blocked"):
             answers.append({"question": a["question"], "key": _norm_key(a["question"]), "answer": "", "blocked": True, "category": a.get("category")})
+            continue
+        if a.get("needs_input") or NEEDS_INPUT_MARK in (a.get("answer") or "").lower():
+            # Never type an answer the human did not confirm. Approving with open items
+            # releases the rest of the packet, not this one. The old rule was a search for
+            # the literal string [NEEDS INPUT], which broke the moment someone typed their
+            # own answer and left the "I have verified this" box ticked-off: real text,
+            # never reviewed, headed for a real employer.
+            unverified.append(a["question"])
             continue
         answers.append(
             {
@@ -800,7 +814,8 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
             )
     edu = [e for e in profile.get("education", []) if isinstance(e, dict) and (e.get("school") or e.get("degree"))]
     return {
-        "version": 1,
+        "version": SNAPSHOT_VERSION,
+        "unverified_questions": unverified,
         "packet_id": packet["id"],
         "generated_at": store.now(),
         "job": {"title": job.get("title", ""), "company": job.get("company", ""), "url": job.get("url", ""), "location": job.get("location", "")},

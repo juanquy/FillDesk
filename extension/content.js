@@ -409,8 +409,13 @@
       if (item.decision.action === 'fill' || item.decision.action === 'upload') mark(item.desc.el, item.decision.review ? 'review' : 'planned');
       if (item.decision.action === 'block') mark(item.desc.el, 'blocked');
     }
+    const unverified = flagUnverified(scanResult);
+    counts.unverified = unverified;
     ui.counts(counts);
     ui.logLines(scanResult.map(lineFor).filter(Boolean));
+    if (unverified) {
+      ui.line({ kind: 'warn', text: `${unverified} question(s) on this form have answers you did not verify — they will NOT be typed. Tick "I have verified this" in the dashboard packet review to release them.` });
+    }
     return counts;
   }
 
@@ -424,6 +429,25 @@
     legal_declaration: 'attestations are signed by you',
     age: 'yours alone',
   };
+
+  // Questions the packet carries but the human never confirmed. They are absent from the
+  // approved answers on purpose; say so, or they look like a matching failure.
+  const normQ = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  function flagUnverified(plan) {
+    const list = ((state.snapshot && state.snapshot.unverified_questions) || []).map(normQ).filter(Boolean);
+    if (!list.length) return 0;
+    let n = 0;
+    for (const item of plan) {
+      if (item.decision.action !== 'skip') continue;
+      const q = normQ([item.desc.label, item.desc.legend, item.desc.groupLabel].join(' '));
+      if (q.length < 12) continue;
+      if (list.some((u) => q.includes(u.slice(0, 40)) || u.includes(q.slice(0, 40)))) {
+        item.decision.unverified = true;
+        n++;
+      }
+    }
+    return n;
+  }
 
   function lineFor(item) {
     const { desc, decision } = item;
@@ -446,7 +470,7 @@
     state.running = true;
     state.cancelled = false;
     ui.setRunning(true);
-    const results = { filled: 0, uploaded: 0, unmatched: 0, blocked: 0, review: 0, failed: [] };
+    const results = { filled: 0, uploaded: 0, unmatched: 0, blocked: 0, review: 0, unverified: 0, failed: [] };
     const delay = Number(state.settings.visible_delay_ms ?? 260);
     let i = 0;
     for (const item of state.plan) {
@@ -455,7 +479,16 @@
       ui.progress(i, state.plan.length);
       const { desc, decision } = item;
       if (decision.action === 'block') { results.blocked++; mark(desc.el, 'blocked'); continue; }
-      if (decision.action === 'skip') { results.unmatched++; continue; }
+      if (decision.action === 'skip') {
+        if (decision.unverified) {
+          results.unverified = (results.unverified || 0) + 1;
+          mark(desc.el, 'review');
+          ui.line({ kind: 'warn', text: `${clipLabel(desc)} — left for you (answer unverified)` });
+        } else {
+          results.unmatched++;
+        }
+        continue;
+      }
       if (!desc.visible) { results.unmatched++; continue; }
       if (!state.settings.overwrite_filled && desc.currentValue && desc.kind !== 'select' && desc.kind !== 'radio' && desc.kind !== 'checkbox') { continue; }
 
@@ -977,7 +1010,7 @@
       summary(r, navAllowed, undoable) {
         const sum = root.querySelector('#fd-sum');
         sum.style.display = 'block';
-        sum.innerHTML = `<b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance) · <b>${r.unmatched}</b> unrecognised
+        sum.innerHTML = `<b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance)${r.unverified ? ` · <b>${r.unverified}</b> left for you (answer unverified)` : ''} · <b>${r.unmatched}</b> unrecognised
           <div class="hint">Nothing was submitted${r.review ? `, and <b>${r.review}</b> answer(s) were flagged <span style="color:#f0c48a">verify</span>` : ''}. Read the whole form — including collapsed sections — then submit it yourself${navAllowed ? '' : ' (navigation clicks are off)'}.</div>
           <div class="hint"><b>You are responsible for everything you submit.</b> Check every answer against your actual situation before you press Submit.${undoable ? ' <button class="btn" id="fd-undo" style="margin-top:4px">Undo what FillDesk typed</button>' : ''}</div>`;
         const undo = sum.querySelector('#fd-undo');
