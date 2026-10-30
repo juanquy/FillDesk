@@ -783,6 +783,13 @@ class HumanInTheLoopTests(unittest.TestCase):
         bg = (EXT / "background.js").read_text()
         self.has(bg, "chrome.tabs.onUpdated", "background.js must listen for tab URL updates")
 
+    def test_extension_panel_has_close_button_and_dismissal(self):
+        self.has(self.content, 'id="fd-close"', "panel header must have close button")
+        self.has(self.content, "function dismissPanel", "content.js must define dismissPanel")
+        self.has(self.content, "function isDismissed", "content.js must check dismissal status")
+        self.has(self.content, "function setDismissed", "content.js must persist dismissal")
+        self.has(self.content, "function dismissalKey", "content.js must scope dismissal key")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

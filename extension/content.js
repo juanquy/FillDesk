@@ -91,6 +91,57 @@
     MEMORY_STORAGE[key] = String(value);
   }
 
+  const MEMORY_SESSION = {};
+  function sessionGet(key) {
+    try {
+      return (typeof window !== 'undefined' && window.sessionStorage) ? window.sessionStorage.getItem(key) : (MEMORY_SESSION[key] || null);
+    } catch (e) {
+      return MEMORY_SESSION[key] || null;
+    }
+  }
+
+  function sessionSet(key, value) {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) window.sessionStorage.setItem(key, String(value));
+    } catch (e) {}
+    MEMORY_SESSION[key] = String(value);
+  }
+
+  function dismissalKey() {
+    const host = (location.hostname || '').toLowerCase();
+    const isJobPortal = host === 'linkedin.com' || host.endsWith('.linkedin.com')
+      || host === 'indeed.com' || host.endsWith('.indeed.com')
+      || host === 'glassdoor.com' || host.endsWith('.glassdoor.com');
+    if (isJobPortal) {
+      return 'filldesk_dismissed_' + host + '_' + (location.pathname || '');
+    }
+    return 'filldesk_dismissed_' + host;
+  }
+
+  const inMemoryDismissed = new Set();
+  function isDismissed() {
+    const key = dismissalKey();
+    if (inMemoryDismissed.has(key)) return true;
+    return sessionGet(key) === '1';
+  }
+
+  function setDismissed(val) {
+    const key = dismissalKey();
+    if (val) {
+      inMemoryDismissed.add(key);
+      sessionSet(key, '1');
+    } else {
+      inMemoryDismissed.delete(key);
+      sessionSet(key, '0');
+    }
+  }
+
+  function dismissPanel() {
+    if (state.running) stop();
+    setDismissed(true);
+    ui.hide();
+  }
+
   // ---------------------------------------------------------------- transport
   function send(msg) {
     return new Promise((resolve) => {
@@ -998,7 +1049,10 @@
       .ttl{font-weight:700;font-size:15px;letter-spacing:.2px}
       .ver{color:#63708a;font-size:11.5px;font-weight:600;margin-right:4px}
       .sub{color:#93a0b5;font-size:12.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .mini{background:#202735;border:1px solid #2a3442;color:#cdd6e3;border-radius:6px;padding:4px 9px;font-size:13px;cursor:pointer}
+      .mini{background:#202735;border:1px solid #2a3442;color:#cdd6e3;border-radius:6px;padding:4px 9px;font-size:13px;cursor:pointer;line-height:1}
+      .mini:hover{background:#2e3849;color:#fff}
+      .mini.close{font-size:14px;padding:3px 8px;margin-left:2px}
+      .mini.close:hover{background:#ef5f5f;border-color:#ef5f5f;color:#fff}
       .btns{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px}
       .btn{flex:1 1 calc(25% - 8px);min-width:85px;background:#252d3b;border:1px solid #33405200;color:#e8ecf3;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;font-weight:600;text-align:center}
       .btn:hover{background:#2e3849}
@@ -1052,6 +1106,7 @@
           <span class="ver" id="fd-ver"></span>
           <span class="sub" id="fd-sub">connecting…</span>
           <button class="mini" id="fd-min" title="collapse">–</button>
+          <button class="mini close" id="fd-close" title="Close FillDesk on this page">✕</button>
         </div>
         <div class="body">
           <div class="bar"><i id="fd-prog"></i></div>
@@ -1109,7 +1164,7 @@
     headEl = $('fd-sub');
 
     function ensureAttached() {
-      if (!mounted) return;
+      if (!mounted || isDismissed()) return;
       if (!host.isConnected || !document.contains(host)) {
         const targetParent = document.documentElement || document.body;
         if (targetParent) {
@@ -1223,6 +1278,9 @@
         storageSet('filldesk_collapsed', box.classList.contains('hide') ? '1' : '0');
         setTimeout(clampPosition, 40);
       };
+      $('fd-close').onclick = () => {
+        dismissPanel();
+      };
       $('fd-fill').onclick = () => {
         if (state.snapshot) run();
         else prepareAndFill();
@@ -1274,9 +1332,12 @@
       mount,
       show,
       hide,
+      dismiss: () => dismissPanel(),
       toggleBox,
       ensureAttached,
       isMounted: () => mounted && host && host.isConnected,
+      isVisible: () => mounted && host && host.isConnected && host.style.display !== 'none',
+      isDismissed: () => isDismissed(),
       line,
       logLines(items) { logEl.innerHTML = ''; items.forEach(line); },
       counts(c) {
@@ -1478,6 +1539,7 @@
     if (!IS_TOP) return;
     const isApp = looksLikeApplication();
     if (isApp) {
+      if (isDismissed()) return;
       if (!ui.isMounted()) {
         ui.mount();
         uiCheckServer();
@@ -1495,7 +1557,7 @@
     if (location.href !== lastHref) {
       lastHref = location.href;
       handleNavigation();
-    } else if (IS_TOP && looksLikeApplication()) {
+    } else if (IS_TOP && looksLikeApplication() && !isDismissed()) {
       ui.ensureAttached();
     }
   }
@@ -1513,7 +1575,7 @@
         + ` (matcher ${window.FILLDESK_MATCHER ? 'ok' : 'MISSING'}, calendar ${window.FILLDESK_CAL ? 'ok' : 'MISSING'})`);
     } catch (e) { /* logging must never break a page */ }
     const APP_LIKE = looksLikeApplication();
-    if (IS_TOP && APP_LIKE) {
+    if (IS_TOP && APP_LIKE && !isDismissed()) {
       ui.mount();
       uiCheckServer();
     }
@@ -1548,38 +1610,47 @@
           case 'mount':
           case 'toggle': {
             if (IS_TOP) {
+              setDismissed(false);
               if (!ui.isMounted()) {
                 ui.mount();
                 ui.show();
                 uiCheckServer();
-              } else {
+              } else if (!ui.isVisible()) {
                 ui.show();
+                uiCheckServer();
+              } else {
                 ui.toggleBox();
               }
             }
-            respond({ ok: true, mounted: ui.isMounted() });
+            respond({ ok: true, mounted: ui.isMounted(), visible: ui.isVisible() });
             break;
           }
           case 'scan': {
+            setDismissed(false);
             if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
+            if (IS_TOP) ui.show();
             respond({ ok: true, counts: await preview() });
             break;
           }
           case 'run': {
+            setDismissed(false);
             if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
+            if (IS_TOP) ui.show();
             if (msg.external && IS_TOP) return respond({ ok: true, skipped: 'top frame drives the run' });
             await run();
             respond({ ok: true, host: location.hostname });
             break;
           }
           case 'save-job': {
+            setDismissed(false);
             if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
+            if (IS_TOP) ui.show();
             await saveJob();
             respond({ ok: true, title: document.title });
             break;
           }
           case 'next': stepNext(); respond({ ok: true }); break;
-          case 'status': respond({ ok: true, host: location.hostname, hasSnapshot: !!state.snapshot, fields: fieldElements().length, appLike: looksLikeApplication(), mounted: ui.isMounted() }); break;
+          case 'status': respond({ ok: true, host: location.hostname, hasSnapshot: !!state.snapshot, fields: fieldElements().length, appLike: looksLikeApplication(), mounted: ui.isMounted(), visible: ui.isVisible(), dismissed: isDismissed() }); break;
           default: respond({ ok: false, error: 'unknown message' });
         }
       } catch (e) {
