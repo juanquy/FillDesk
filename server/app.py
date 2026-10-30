@@ -507,7 +507,7 @@ def r_packet_file(api: Api, packet_id: str):
     fmt = api.q("fmt", "docx").lower()
     profile = store.load_profile()
     cand_name = store.slug(profile.get("name") or "resume")
-    comp_name = store.slug(p.get("company") or "")
+    comp_name = store.slug(p.get("company")) if p.get("company") else ""
     if kind == "cover":
         text = p.get("cover_letter", {}).get("text", "")
         cover_name = f"{cand_name}-cover-letter-{comp_name}" if comp_name else f"{cand_name}-cover-letter"
