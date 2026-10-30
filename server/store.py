@@ -101,6 +101,12 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "email": "",
     "phone": "",
     "location": "",              # city, state/country -- used for "location" fields
+    "address_line1": "",         # street address e.g. "5 1/2 S Jefferson Ave"
+    "address_line2": "",         # apt / suite / unit / NA
+    "city": "",                  # city e.g. "Iola"
+    "state": "",                 # state e.g. "Kansas" / "KS"
+    "postal_code": "",           # zip e.g. "66749"
+    "country": "United States",  # country
     "timezone": "",
     "links": {
         "linkedin": "",
@@ -111,9 +117,21 @@ DEFAULT_PROFILE: dict[str, Any] = {
     },
     "headline": "",              # e.g. "Senior Product Manager"
     "target_title": "",          # what you are applying for, if different
-    "work_authorization_note": "",   # stored, never auto-submitted into compliance fields
+    "work_authorization_note": "",   # e.g. "U.S. Citizen"
+    "authorized_us": True,
+    "requires_sponsorship": False,
+    "citizenship_status": "U.S. Citizen",
+    "eeoc": {
+        "gender": "",            # Male | Female | Non-Binary | Decline
+        "race": "",              # Hispanic or Latino | White | Black or African American | Asian | Decline
+        "veteran": "",           # I am not a protected veteran | I identify as a protected veteran | Decline
+        "disability": "",        # No | Yes | Decline
+    },
     "salary_expectation": "",
     "relocation": "",            # e.g. "Open to relocation" / "Remote only"
+    "willing_to_relocate": "No",
+    "work_model": "Remote",
+    "how_heard": "LinkedIn",
     "start_date": "",
     "notice_period": "",
     "summary": "",               # professional summary paragraph
@@ -137,21 +155,12 @@ DEFAULT_PROFILE: dict[str, Any] = {
         }
     ],
     "education": [
-        {"id": "edu_1", "school": "", "degree": "", "field": "", "start": "", "end": "", "location": "", "notes": ""}
+        {"id": "edu_1", "school": "", "degree": "", "field": "", "minor": "", "start_year": "", "start_month": "", "end_year": "", "end_month": "", "start": "", "end": "", "school_fallback": "Other", "location": "", "notes": ""}
     ],
     "projects": [
         {"id": "prj_1", "name": "", "description": "", "link": "", "bullets": []}
     ],
-    "boilerplate": [
-        # Reusable canned answers -- the highest-leverage thing you can invest 20 minutes in.
-        # Every entry here has to be answerable before there is an employer. "Why this
-        # company?" used to be seeded and could not be, so it sat empty forever and showed
-        # up as a missing answer; that question is drafted per packet from the posting.
-        {"id": "ans_1", "label": "What are you looking for in your next role?", "text": ""},
-        {"id": "ans_2", "label": "Tell me about a challenge", "text": ""},
-        {"id": "ans_3", "label": "Why are you leaving?", "text": ""},
-        {"id": "ans_4", "label": "Greatest weakness", "text": ""},
-    ],
+    "boilerplate": [],
     "master_resume_markdown": "",   # your canonical resume as markdown; the source of truth
     "extras": {},                   # anything else: clearance, driving license, etc.
     "updated_at": "",

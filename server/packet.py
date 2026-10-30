@@ -886,7 +886,23 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
                     "bullets": experience_bullets(e),
                 }
             )
-    edu = [e for e in profile.get("education", []) if isinstance(e, dict) and (e.get("school") or e.get("degree"))]
+    edu = []
+    for e in profile.get("education", []):
+        if isinstance(e, dict) and (e.get("school") or e.get("degree")):
+            edu.append({
+                "school": e.get("school", ""),
+                "degree": e.get("degree", ""),
+                "field": e.get("field", "") or e.get("major", ""),
+                "minor": e.get("minor", ""),
+                "start": e.get("start", ""),
+                "end": e.get("end", ""),
+                "start_year": e.get("start_year") or (re.search(r"\b(19\d\d|20\d\d)\b", str(e.get("start", ""))) or [""])[0],
+                "start_month": e.get("start_month") or (re.search(r"\b([A-Za-z]+)\b", str(e.get("start", ""))) or [""])[0],
+                "end_year": e.get("end_year") or (re.search(r"\b(19\d\d|20\d\d)\b", str(e.get("end", ""))) or [""])[0],
+                "end_month": e.get("end_month") or (re.search(r"\b([A-Za-z]+)\b", str(e.get("end", ""))) or [""])[0],
+                "school_fallback": e.get("school_fallback") or "Other",
+                "location": e.get("location", ""),
+            })
     wa_raw = str(profile.get("work_authorization_note") or "").strip()
     wa_lower = wa_raw.lower()
     is_citizen = bool(re.search(r"\b(u\.?s\.?\s*)?citizen\b", wa_lower))
@@ -898,6 +914,20 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
         "authorized": bool(wa_raw and (is_citizen or is_pr or not needs_sponsor or "authorized" in wa_lower)),
         "requires_sponsorship": True if needs_sponsor else (False if (is_citizen or is_pr) else None),
     }
+
+    # Split address or parse from profile.location
+    addr_line1 = profile.get("address_line1") or ""
+    addr_line2 = profile.get("address_line2") or ""
+    city = profile.get("city") or ""
+    state = profile.get("state") or ""
+    postal = profile.get("postal_code") or ""
+    country = profile.get("country") or "United States"
+    if not (city and state) and profile.get("location"):
+        parts = [p.strip() for p in profile["location"].split(",") if p.strip()]
+        if len(parts) >= 2:
+            city = city or parts[0]
+            state = state or parts[1]
+
     return {
         "version": SNAPSHOT_VERSION,
         "fingerprint": snapshot_fingerprint(packet),
@@ -915,6 +945,31 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
             "headline": profile.get("headline", ""),
             "pronouns": profile.get("pronouns", ""),
             "timezone": profile.get("timezone", ""),
+            "address_line1": addr_line1,
+            "address_line2": addr_line2,
+            "city": city,
+            "state": state,
+            "postal_code": postal,
+            "country": country,
+        },
+        "address": {
+            "line1": addr_line1,
+            "line2": addr_line2,
+            "city": city,
+            "state": state,
+            "postal_code": postal,
+            "country": country,
+        },
+        "eeoc": profile.get("eeoc") or {
+            "gender": profile.get("gender") or "",
+            "race": profile.get("race") or "",
+            "veteran": profile.get("veteran") or "",
+            "disability": profile.get("disability") or "",
+        },
+        "preferences": {
+            "willing_to_relocate": profile.get("willing_to_relocate") or profile.get("relocation") or "",
+            "work_model": profile.get("work_model") or "Remote",
+            "how_heard": profile.get("how_heard") or "LinkedIn",
         },
         "links": links,
         "resume_markdown": packet.get("resume", {}).get("markdown", ""),

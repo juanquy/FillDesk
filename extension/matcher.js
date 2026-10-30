@@ -63,8 +63,8 @@
     { key: 'identity.email', rx: /e-?mail|email address/, autocomplete: ['email'] },
     { key: 'identity.phone', rx: /phone|mobile|telephone|cell(ular)? (number|phone)|contact number/, autocomplete: ['tel'] },
     { key: 'identity.location', rx: /\b(location\b|current location|where (are|do) you( currently)? (based|located|living|from)|based in|home ?town|hometown|city and state)\b/ },
-    { key: 'address.line1', rx: /(address|street)\s*(line)?\s*(1)?|address ?1|street address|mailing address/, autocomplete: ['address-line1'] },
-    { key: 'address.line2', rx: /address\s*(line )?2|apartment|suite|unit number|apt/, autocomplete: ['address-line2'] },
+    { key: 'address.line2', rx: /(?:address\s*(?:line\s*)?2|apartment|suite|unit\s*(?:number|#)?|\bapt\b)/i, autocomplete: ['address-line2'] },
+    { key: 'address.line1', rx: /(?:address\s*(?:line\s*)?1|street\s*address|mailing\s*address|(?:^|\b)(?:home\s*)?address(?!\s*(?:line\s*)?2)\b)/i, autocomplete: ['address-line1'] },
     { key: 'address.city', rx: /\bcity\b|town|suburb/, autocomplete: ['address-level2'] },
     { key: 'address.state', rx: /\bstate\b|province|region|county/, autocomplete: ['address-level1'] },
     { key: 'address.postal', rx: /zip|postal|post ?code/, autocomplete: ['postal-code'] },
@@ -84,14 +84,24 @@
     // -- employment history (indexed; content.js maps "current"/"most recent" to index 0)
     { key: 'exp.company', rx: /(current|most recent|previous|present|last)\s*(employer|company|organization|organisation)|employer|company name|organization name|name of (employer|company|organization)/ },
     { key: 'exp.title', rx: /(current|most recent|previous|present)\s*(job )?(title|position|role)|job title|position title|role title|your (job )?title|designation/ },
+    { key: 'exp.start_month', rx: /\b(start|from|begin|joined)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(start|from|begin|joined)\b/, requires: 'employment' },
+    { key: 'exp.start_year', rx: /\b(start|from|begin|joined)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(start|from|begin|joined)\b/, requires: 'employment' },
     { key: 'exp.start', rx: /\b(start|from|begin|joining|joined|since)\b\s*(date|month|year|mm)?/, requires: 'employment' },
+    { key: 'exp.end_month', rx: /\b(end|to|until|through|leaving)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(end|to|until|through|leaving)\b/, requires: 'employment' },
+    { key: 'exp.end_year', rx: /\b(end|to|until|through|leaving)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(end|to|until|through|leaving)\b/, requires: 'employment' },
     { key: 'exp.end', rx: /\b(end|to|until|through|leaving|left|terminated)\b\s*(date|month|year|mm)?/, requires: 'employment' },
     { key: 'exp.location', rx: /(job|position|role|employer)\s*location|location of (employment|position)/, requires: 'employment' },
     { key: 'exp.reason_for_leaving', rx: /reason (for|of) (leaving|separation|departure)|why (did you leave|are you leaving)/ },
 
     // -- education
-    { key: 'edu.school', rx: /(school|university|college|institution|institute)\b.*(name)?|name of (school|university|college)|highest (level of )?education/ },
-    { key: 'edu.degree', rx: /degree|major|field of study|programme|program of study|qualification|discipline/ },
+    { key: 'edu.school', rx: /(school|university|college|institution|institute)\b.*(name)?|name of (school|university|college)|institution name/ },
+    { key: 'edu.degree', rx: /\b(degree|level of education|education level|highest level of education|qualification|diploma|programme|program of study)\b/ },
+    { key: 'edu.minor', rx: /\bminor\b/ },
+    { key: 'edu.major', rx: /\b(major|field of study|discipline|area of study)\b/ },
+    { key: 'edu.start_month', rx: /\b(start|from|begin|attended from)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(start|from|begin|attended from)\b/, requires: 'education' },
+    { key: 'edu.start_year', rx: /\b(start|from|begin|attended from)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(start|from|begin|attended from)\b/, requires: 'education' },
+    { key: 'edu.end_month', rx: /\b(end|to|through|attended to|graduation|grad)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(end|to|through|attended to|graduation|grad)\b/, requires: 'education' },
+    { key: 'edu.end_year', rx: /\b(end|to|through|attended to|graduation|grad)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(end|to|through|attended to|graduation|grad)\b/, requires: 'education' },
     { key: 'edu.year', rx: /(graduation|grad)\s*(year|date)|year (you )?(graduated|completed)|expected graduation/ },
 
     // -- profile bits
@@ -213,7 +223,26 @@
       .trim();
   }
 
-  function matchOption(options, wanted) {
+  const US_STATES = {
+    al: 'alabama', ak: 'alaska', az: 'arizona', ar: 'arkansas', ca: 'california', co: 'colorado',
+    ct: 'connecticut', de: 'delaware', fl: 'florida', ga: 'georgia', hi: 'hawaii', id: 'idaho',
+    il: 'illinois', in: 'indiana', ia: 'iowa', ks: 'kansas', ky: 'kentucky', la: 'louisiana',
+    me: 'maine', md: 'maryland', ma: 'massachusetts', mi: 'michigan', mn: 'minnesota', ms: 'mississippi',
+    mo: 'missouri', mt: 'montana', ne: 'nebraska', nv: 'nevada', nh: 'new hampshire', nj: 'new jersey',
+    nm: 'new mexico', ny: 'new york', nc: 'north carolina', nd: 'north dakota', oh: 'ohio', ok: 'oklahoma',
+    or: 'oregon', pa: 'pennsylvania', ri: 'rhode island', sc: 'south carolina', sd: 'south dakota',
+    tn: 'tennessee', tx: 'texas', ut: 'utah', vt: 'vermont', va: 'virginia', wa: 'washington',
+    wv: 'west virginia', wi: 'wisconsin', wy: 'wyoming'
+  };
+
+  const DEGREE_ALIASES = [
+    [/^(bachelor|bs\b|b\.s|ba\b|b\.a|undergraduate)/i, ['bachelor of science', 'bachelor of arts', "bachelor's", 'bachelor']],
+    [/^(master|ms\b|m\.s|ma\b|m\.a|graduate)/i, ['master of science', 'master of arts', "master's", 'master']],
+    [/^(phd|ph\.d|doctorate|doctoral)/i, ['doctorate', 'ph.d', 'doctoral degree']],
+    [/^(associate|as\b|a\.s|aa\b|a\.a)/i, ["associate's degree", 'associate of science', 'associate of arts', 'associate']],
+  ];
+
+  function matchOption(options, wanted, context) {
     const w = normalizeOption(wanted);
     if (!w || !options || !options.length) return -1;
     for (let i = 0; i < options.length; i++) {
@@ -223,6 +252,124 @@
       const label = normalizeOption(options[i].label);
       if (label && (label.startsWith(w) || w.startsWith(label) || label.includes(w) || w.includes(label))) return i;
     }
+
+    // State expansion: e.g. "KS" vs "Kansas"
+    const stateFull = US_STATES[w] || Object.keys(US_STATES).find(k => US_STATES[k] === w);
+    if (stateFull) {
+      for (let i = 0; i < options.length; i++) {
+        const label = normalizeOption(options[i].label);
+        if (label === stateFull || label.includes(stateFull) || (w.length === 2 && new RegExp('\\b' + w + '\\b', 'i').test(options[i].label))) return i;
+      }
+    }
+
+    // Degree matching: e.g. "BS" vs "Bachelor of Science"
+    if (context === 'edu.degree' || /degree|education/i.test(context || '')) {
+      for (const [rx, aliases] of DEGREE_ALIASES) {
+        if (rx.test(w)) {
+          for (let i = 0; i < options.length; i++) {
+            const label = normalizeOption(options[i].label);
+            if (aliases.some(a => label.includes(a) || a.includes(label))) return i;
+          }
+        }
+      }
+    }
+
+    // EEOC matching:
+    // Gender
+    if (/gender|sex/i.test(context || '')) {
+      if (/^male\b/i.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          if (/\bmale\b|\bman\b/i.test(options[i].label) && !/female/i.test(options[i].label)) return i;
+        }
+      } else if (/^female\b/i.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          if (/\bfemale\b|\bwoman\b/i.test(options[i].label)) return i;
+        }
+      }
+    }
+
+    // Race
+    if (/race|ethnic/i.test(context || '')) {
+      if (/hispanic|latino/i.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          if (/hispanic|latino/i.test(options[i].label)) return i;
+        }
+      } else if (/white/i.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          if (/white/i.test(options[i].label) && !/not hispanic/i.test(options[i].label)) return i;
+        }
+      } else if (/black|african/i.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          if (/black|african/i.test(options[i].label)) return i;
+        }
+      } else if (/asian/i.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          if (/asian/i.test(options[i].label)) return i;
+        }
+      }
+    }
+
+    // Veteran
+    if (/veteran/i.test(context || '')) {
+      const isNot = /not|no\b/i.test(w);
+      for (let i = 0; i < options.length; i++) {
+        const opt = options[i].label;
+        if (isNot && (/\b(not|no)\b/i.test(opt) && !/decline|prefer not/i.test(opt))) return i;
+        if (!isNot && (/\b(identify|yes|protected veteran)\b/i.test(opt) && !/\bnot\b/i.test(opt))) return i;
+      }
+    }
+
+    // Disability
+    if (/disability/i.test(context || '')) {
+      const isNo = /^(no|none|not)\b/i.test(w);
+      for (let i = 0; i < options.length; i++) {
+        const opt = options[i].label;
+        if (isNo && (/\bno\b/i.test(opt) && !/decline|prefer not/i.test(opt))) return i;
+        if (!isNo && (/\byes\b/i.test(opt) && !/\bnot\b/i.test(opt))) return i;
+      }
+    }
+
+    // Decline / Prefer not to say fallback
+    if (/decline|choose not|prefer not/i.test(w)) {
+      for (let i = 0; i < options.length; i++) {
+        if (/\b(decline|choose not|prefer not|do not wish|opt out|not disclosed)\b/i.test(options[i].label)) return i;
+      }
+    }
+
+    // School "Other" Fallback
+    if (context === 'edu.school' || /school|institution/i.test(context || '')) {
+      for (let i = 0; i < options.length; i++) {
+        if (/^(other|not listed|other institution|institution not listed|none of the above|foreign|unlisted)\b/i.test(normalizeOption(options[i].label))) return i;
+      }
+    }
+
+    // Month matching: e.g. "09" vs "September" vs "Sep" vs "9"
+    if (/month/i.test(context || '')) {
+      const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+      const monthAbbrs = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      let targetMo = 0;
+      const numW = parseInt(w, 10);
+      if (!isNaN(numW) && numW >= 1 && numW <= 12) targetMo = numW;
+      else {
+        const idxFull = monthNames.findIndex(m => m.startsWith(w) || w.startsWith(m));
+        if (idxFull >= 0) targetMo = idxFull + 1;
+      }
+      if (targetMo >= 1 && targetMo <= 12) {
+        const full = monthNames[targetMo - 1];
+        const abbr = monthAbbrs[targetMo - 1];
+        const numStr = String(targetMo);
+        const padStr = String(targetMo).padStart(2, '0');
+        for (let i = 0; i < options.length; i++) {
+          const opt = normalizeOption(options[i].label);
+          if (opt === full || opt === abbr || opt === numStr || opt === padStr ||
+              opt.startsWith(full) || opt.startsWith(abbr) ||
+              new RegExp('\\b' + padStr + '\\b').test(opt) || new RegExp('\\b' + numStr + '\\b').test(opt)) {
+            return i;
+          }
+        }
+      }
+    }
+
     // numeric coercion: "5" vs "5 years" vs "5+ years of experience"
     const num = (w.match(/\d+/) || [])[0];
     if (num) {
@@ -359,7 +506,14 @@
   // start date -- a wrong answer that looks completely plausible.
   function employmentContext(field) {
     const hay = norm((field.section || '') + ' ' + (field.legend || '') + ' ' + (field.groupLabel || ''));
-    return /\b(experience|employment|work history|work history|previous (job|role|position|employer)|professional background|job history)\b/.test(hay);
+    return /\b(experience|employment|work history|previous (job|role|position|employer)|professional background|job history)\b/.test(hay);
+  }
+
+  function educationContext(field) {
+    const hay = norm((field.section || '') + ' ' + (field.legend || '') + ' ' + (field.groupLabel || ''));
+    if (/\b(education|academic|degree|school|university|college)\b/.test(hay)) return true;
+    const self = norm((field.label || '') + ' ' + (field.placeholder || '') + ' ' + (field.name || '') + ' ' + (field.id || ''));
+    return /\b(school|degree|major|minor|institution|college|university|gpa|graduat)\b/.test(self);
   }
 
   // A sentence on a form is an employer question; a short string is a field label.
@@ -478,6 +632,81 @@
     return null;
   }
 
+  function classifyEEOC(field, n, snap) {
+    if (!snap) return null;
+    const eeoc = snap.eeoc || {};
+
+    // 1. Gender / Sex (exclude sexual orientation)
+    if (/\b(gender|sex)\b/i.test(n) && !/\b(orientation|sexual orientation)\b/i.test(n)) {
+      const val = eeoc.gender || snap.gender || '';
+      if (val) {
+        return {
+          action: 'fill',
+          key: 'eeoc.gender',
+          value: val,
+          context: 'eeoc.gender',
+          confidence: 0.95,
+          category: 'eeoc',
+          review: 'eeoc',
+          method: 'eeoc_profile',
+        };
+      }
+    }
+
+    // 2. Race / Ethnicity
+    if (/\b(race|ethnic|ethnicity)\b/i.test(n)) {
+      const val = eeoc.race || snap.race || '';
+      if (val) {
+        return {
+          action: 'fill',
+          key: 'eeoc.race',
+          value: val,
+          context: 'eeoc.race',
+          confidence: 0.95,
+          category: 'eeoc',
+          review: 'eeoc',
+          method: 'eeoc_profile',
+        };
+      }
+    }
+
+    // 3. Veteran Status
+    if (/\b(veteran|military service|armed forces|protected veteran)\b/i.test(n)) {
+      const val = eeoc.veteran || snap.veteran || '';
+      if (val) {
+        return {
+          action: 'fill',
+          key: 'eeoc.veteran',
+          value: val,
+          context: 'eeoc.veteran',
+          confidence: 0.95,
+          category: 'eeoc',
+          review: 'eeoc',
+          method: 'eeoc_profile',
+        };
+      }
+    }
+
+    // 4. Disability Status
+    if (/\b(disabilit\w+|handicap)\b/i.test(n)) {
+      const val = eeoc.disability || snap.disability || '';
+      if (val) {
+        return {
+          action: 'fill',
+          key: 'eeoc.disability',
+          value: val,
+          context: 'eeoc.disability',
+          confidence: 0.95,
+          category: 'eeoc',
+          review: 'eeoc',
+          method: 'eeoc_profile',
+        };
+      }
+    }
+
+    return null;
+  }
+
   // ------------------------------------------------------------------ decision
   function signal(field) {
     return [
@@ -501,7 +730,7 @@
       method: '',
     };
 
-    if (!field.visible) { out.reason = 'hidden'; return out; }
+    if (!field.visible && field.type !== 'file') { out.reason = 'hidden'; return out; }
     if (field.type === 'password') { out.reason = 'password field'; return out; }
     if (/(credit ?card|cvv|card number|cvc|expiry)/.test(n)) { out.action = 'block'; out.category = 'financial_and_credit'; out.reason = 'payment credential'; return out; }
 
@@ -512,6 +741,10 @@
         if (b.category === 'work_authorization' && settings && settings.autofill_work_auth) {
           const wa = classifyWorkAuth(field, n, snap);
           if (wa) return wa;
+        }
+        if ((b.category === 'protected_class' || b.category === 'disability' || b.category === 'veteran') && settings && settings.autofill_eeoc) {
+          const eeoc = classifyEEOC(field, n, snap);
+          if (eeoc) return eeoc;
         }
         out.action = 'block';
         out.category = b.category;
@@ -572,6 +805,7 @@
     for (const rule of RULES) {
       if (rule.requires === 'date' && !looksLikeDate(field)) continue;
       if (rule.requires === 'employment' && !(looksLikeDate(field) && employmentContext(field))) continue;
+      if (rule.requires === 'education' && !(looksLikeDate(field) && educationContext(field))) continue;
       if (rule.types && field.tag !== 'input' && field.tag !== 'textarea' && field.tag !== 'select' && field.tag !== 'file') continue;
       if (rule.types && rule.types.indexOf(field.type) < 0 && rule.types.indexOf(field.tag) < 0) continue;
       let hit = false;
@@ -595,28 +829,100 @@
         const sub = chosen.key.slice(4);
         const idx = field.index || 0;
         const e = ((snap.experience || [])[idx]) || (snap.experience || [])[0] || {};
-        value = String(e[sub] || '');
-        if (sub === 'end' && (e.end || '').match(/present|current/i)) value = '';
-        if (sub === 'start' || sub === 'end') out.isDate = true;
+        if (sub === 'start_month') {
+          const d = parseDate(e.start);
+          value = (d && d.mo) ? String(d.mo) : '';
+          out.context = 'exp.start_month';
+        } else if (sub === 'start_year') {
+          const d = parseDate(e.start);
+          value = (d && d.y) ? String(d.y) : '';
+        } else if (sub === 'end_month') {
+          const d = parseDate(e.end);
+          value = (d && d.mo) ? String(d.mo) : '';
+          out.context = 'exp.end_month';
+        } else if (sub === 'end_year') {
+          const d = parseDate(e.end);
+          value = (d && d.y) ? String(d.y) : '';
+        } else {
+          value = String(e[sub] || '');
+          if (sub === 'end' && (e.end || '').match(/present|current/i)) value = '';
+          if (sub === 'start' || sub === 'end') out.isDate = true;
+        }
       } else if (chosen.key.indexOf('edu.') === 0) {
         const sub = chosen.key.slice(4);
-        const e = (snap.education || [])[field.index || 0] || (snap.education || [])[0] || {};
+        const idx = field.index || 0;
+        const e = (snap.education || [])[idx] || (snap.education || [])[0] || {};
         const combined = `${e.degree || ''} ${e.field || ''}`.trim();
-        if (sub === 'year') value = String(e.end || '');
-        else if (sub === 'school') value = String(e.school || '');
-        else value = combined.length > String(e.degree || '').length + 1 ? combined : String(e.degree || '');
-        if (sub === 'year') out.isDate = true;
+        if (sub === 'year') {
+          value = String(e.year || e.end_year || e.end || '');
+          out.isDate = true;
+        } else if (sub === 'school') {
+          value = String(e.school || '');
+          out.context = 'edu.school';
+        } else if (sub === 'degree') {
+          if (field.tag === 'select') {
+            value = String(e.degree || '');
+          } else if (/\b(field of study|major)\b/i.test(n) && combined.length > String(e.degree || '').length) {
+            value = combined;
+          } else {
+            value = combined.length > String(e.degree || '').length + 1 ? combined : String(e.degree || '');
+          }
+          out.context = 'edu.degree';
+        } else if (sub === 'major') {
+          value = String(e.field || e.major || '');
+          out.context = 'edu.major';
+        } else if (sub === 'minor') {
+          value = String(e.minor || '');
+          out.context = 'edu.minor';
+        } else if (sub === 'start_month') {
+          value = String(e.start_month || '');
+          out.context = 'edu.start_month';
+        } else if (sub === 'start_year') {
+          value = String(e.start_year || '');
+          out.context = 'edu.start_year';
+        } else if (sub === 'end_month') {
+          value = String(e.end_month || '');
+          out.context = 'edu.end_month';
+        } else if (sub === 'end_year') {
+          value = String(e.end_year || e.year || '');
+          out.context = 'edu.end_year';
+        } else if (sub === 'start') {
+          value = String(e.start || e.start_year || '');
+          out.isDate = true;
+        } else if (sub === 'end') {
+          value = String(e.end || e.end_year || e.year || '');
+          out.isDate = true;
+        } else {
+          value = combined.length > String(e.degree || '').length + 1 ? combined : String(e.degree || '');
+        }
       } else if (chosen.key.indexOf('review.') === 0 || chosen.key.indexOf('misc.') === 0) {
         value = answerForKey(chosen.key, snap);
         if (chosen.key === 'misc.currently_employed') {
           const latest = (snap.experience || [])[0] || {};
           value = latest.current ? 'yes' : 'no';
         }
-        if (chosen.key === 'misc.how_heard') { out.action = 'skip'; out.reason = 'only you know how you found it'; return out; }
+        if (chosen.key === 'misc.how_heard') {
+          value = (snap.preferences && snap.preferences.how_heard) || resolve('misc.how_heard', snap) || '';
+          if (!value) { out.action = 'skip'; out.reason = 'only you know how you found it'; return out; }
+        }
+        if (chosen.key === 'misc.work_model') {
+          value = (snap.preferences && snap.preferences.work_model) || resolve('misc.work_model', snap) || value;
+        }
+        if (chosen.key === 'review.relocation') {
+          const rel = snap.preferences && snap.preferences.willing_to_relocate;
+          if (rel != null && rel !== '') value = rel ? 'Yes' : 'No';
+        }
         if (chosen.key === 'misc.preferred_name' || chosen.key === 'misc.legally_first_name') value = resolve('identity.first_name', snap);
       } else if (chosen.key.indexOf('address.') === 0) {
+        const sub = chosen.key.slice(8);
+        const addr = (snap.address && typeof snap.address === 'object') ? snap.address : {};
         const loc = splitLocation(resolve('identity.location', snap));
-        value = resolve(chosen.key, snap) || loc[chosen.key.split('.')[1]] || '';
+        if (sub === 'line1') value = addr.line1 || addr.address_line1 || resolve('identity.address', snap) || '';
+        else if (sub === 'line2') value = addr.line2 || addr.address_line2 || '';
+        else if (sub === 'city') value = addr.city || resolve(chosen.key, snap) || loc.city || '';
+        else if (sub === 'state') { value = addr.state || resolve(chosen.key, snap) || loc.state || ''; out.context = 'address.state'; }
+        else if (sub === 'postal') value = addr.postal_code || addr.postal || resolve(chosen.key, snap) || '';
+        else if (sub === 'country') { value = addr.country || resolve(chosen.key, snap) || loc.country || 'United States'; out.context = 'address.country'; }
       } else if (chosen.key === 'identity.location') {
         value = resolve('identity.location', snap);
       } else if (chosen.key === 'identity.phone') {
@@ -672,8 +978,9 @@
 
   root.FILLDESK_MATCHER = {
     norm, key, signal, classify, matchAnswer, matchOption, normalizeOption, booleanFor,
-    formatDate, parseDate, datePrecision, dateHintFor, looksLikeDate, looksLikeQuestion, employmentContext,
+    formatDate, parseDate, datePrecision, dateHintFor, looksLikeDate, looksLikeQuestion,
+    employmentContext, educationContext,
     splitLocation, digits, isSubmitText, isNextText, intentOf, BLOCKED, REVIEW, RULES, INTENTS, overlap,
-    getWorkAuthInfo, classifyWorkAuth,
+    getWorkAuthInfo, classifyWorkAuth, classifyEEOC,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

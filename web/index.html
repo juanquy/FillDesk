@@ -11,7 +11,7 @@
   <div class="brand">FillDesk<span class="dot"></span></div>
   <nav class="tabs">
     <button data-tab="profile" class="tab active">Profile</button>
-    <button data-tab="jobs" class="tab">Jobs</button>
+    <button data-tab="jobs" class="tab">Applications</button>
     <button data-tab="packets" class="tab">Packets</button>
     <button data-tab="settings" class="tab">Settings</button>
   </nav>
@@ -36,11 +36,17 @@
 
     <div class="grid two">
       <div class="card">
-        <h2>Identity</h2>
+        <h2>Identity &amp; Address</h2>
         <div class="row"><label>Full name</label><input id="p-name" placeholder="Alex Rivera"></div>
         <div class="row"><label>Email</label><input id="p-email" type="email" placeholder="alex@example.com"></div>
         <div class="row"><label>Phone</label><input id="p-phone" placeholder="+1 415 555 0100"></div>
-        <div class="row"><label>City, country</label><input id="p-location" placeholder="San Francisco, CA"></div>
+        <div class="row"><label>Address Line 1</label><input id="p-addr1" placeholder="123 Main St"></div>
+        <div class="row"><label>Address Line 2</label><input id="p-addr2" placeholder="Apt, Suite, Unit (optional)"></div>
+        <div class="row"><label>City</label><input id="p-city" placeholder="San Francisco"></div>
+        <div class="row"><label>State / Province</label><input id="p-state" placeholder="California"></div>
+        <div class="row"><label>Postal / Zip Code</label><input id="p-postal" placeholder="94105"></div>
+        <div class="row"><label>Country</label><input id="p-country" placeholder="United States"></div>
+        <div class="row"><label>Location (summary)</label><input id="p-location" placeholder="San Francisco, CA"></div>
         <div class="row"><label>Headline</label><input id="p-headline" placeholder="Senior Product Manager"></div>
         <div class="row"><label>Pronouns</label><input id="p-pronouns" placeholder="she/her"></div>
         <div class="row"><label>LinkedIn</label><input id="p-linkedin" placeholder="https://linkedin.com/in/…"></div>
@@ -49,17 +55,78 @@
       </div>
 
       <div class="card">
-        <h2>Answers the forms always ask</h2>
-        <p class="muted">These are filled into employer forms when asked, and always flagged for a second look. They are <strong>never</strong> used for compliance questions.</p>
+        <h2>Preferences &amp; Work Authorization</h2>
+        <p class="muted">Filled into application forms and always flagged for a second look.</p>
         <div class="row"><label>Salary expectation</label><input id="p-salary" placeholder="$180,000 base / negotiable"></div>
-        <div class="row"><label>Relocation / work model</label><input id="p-relocation" placeholder="Remote or SF hybrid"></div>
+        <div class="row"><label>Work model / Location</label><input id="p-relocation" placeholder="Remote, Hybrid, or On-site"></div>
+        <div class="row"><label>Willing to relocate?</label>
+          <select id="p-willing-relocate">
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        </div>
         <div class="row"><label>Earliest start</label><input id="p-start" placeholder="4 weeks after offer" data-cal="mdy"></div>
         <div class="row"><label>Notice period</label><input id="p-notice" placeholder="4 weeks"></div>
-        <div class="row"><label>Work authorization note</label><textarea id="p-workauth" rows="2" placeholder="For your own reference only — FillDesk never answers citizenship, sponsorship, or EEO questions."></textarea></div>
-        <div class="notice">
-          <strong>Hard refusal.</strong> FillDesk will not answer race, ethnicity, gender, religion, sexual orientation,
-          disability, veteran status, work authorization, sponsorship, age, criminal-history, or any attestation or
-          signature. Those are answered by you, on the employer's page, every time.
+        <div class="row"><label>How did you hear about us?</label><input id="p-howheard" placeholder="LinkedIn / Company website"></div>
+        <div class="row"><label>U.S. Citizenship</label>
+          <select id="p-wa-status">
+            <option value="U.S. Citizen">U.S. Citizen</option>
+            <option value="Permanent Resident">Permanent Resident (Green Card)</option>
+            <option value="Authorized">Authorized to work in the U.S.</option>
+            <option value="Require Sponsorship">Require Sponsorship</option>
+          </select>
+        </div>
+        <div class="row"><label>Require visa sponsorship?</label>
+          <select id="p-wa-sponsor">
+            <option value="No">No</option>
+            <option value="Yes">Yes</option>
+          </select>
+        </div>
+        <div class="row"><label>Work authorization note</label><textarea id="p-workauth" rows="2" placeholder="Optional notes for your reference"></textarea></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Voluntary Self-Identification (EEOC)</h2>
+      <p class="muted">Optional disclosures commonly requested on U.S. applications. When enabled in Settings, FillDesk will autofill these choices for you and highlight them for review.</p>
+      <div class="grid two">
+        <div class="row"><label>Gender / Sex</label>
+          <select id="p-eeoc-gender">
+            <option value="">(Select or leave unselected)</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Non-binary">Non-binary</option>
+            <option value="I decline to self-identify">I decline to self-identify</option>
+          </select>
+        </div>
+        <div class="row"><label>Race / Ethnicity</label>
+          <select id="p-eeoc-race">
+            <option value="">(Select or leave unselected)</option>
+            <option value="Hispanic or Latino">Hispanic or Latino</option>
+            <option value="White (Not Hispanic or Latino)">White (Not Hispanic or Latino)</option>
+            <option value="Black or African American">Black or African American</option>
+            <option value="Asian">Asian</option>
+            <option value="American Indian or Alaska Native">American Indian or Alaska Native</option>
+            <option value="Native Hawaiian or Other Pacific Islander">Native Hawaiian or Other Pacific Islander</option>
+            <option value="Two or More Races">Two or More Races</option>
+            <option value="I decline to state">I decline to state</option>
+          </select>
+        </div>
+        <div class="row"><label>Veteran Status</label>
+          <select id="p-eeoc-veteran">
+            <option value="">(Select or leave unselected)</option>
+            <option value="I am not a protected veteran">I am not a protected veteran</option>
+            <option value="I identify as one or more of the classifications of protected veteran">I identify as one or more of the classifications of protected veteran</option>
+            <option value="I decline to state">I decline to state</option>
+          </select>
+        </div>
+        <div class="row"><label>Disability Status</label>
+          <select id="p-eeoc-disability">
+            <option value="">(Select or leave unselected)</option>
+            <option value="No, I do not have a disability">No, I do not have a disability</option>
+            <option value="Yes, I have a disability">Yes, I have a disability</option>
+            <option value="I decline to state">I decline to state</option>
+          </select>
         </div>
       </div>
     </div>
@@ -238,7 +305,8 @@
       <label class="check"><input type="checkbox" id="s-nav"> Allow clicking “Next / Continue” on multi-page forms (never Submit)</label>
       <label class="check"><input type="checkbox" id="s-upload"> Attach the approved resume and cover letter to upload fields</label>
       <label class="check"><input type="checkbox" id="s-workauth"> Auto-fill U.S. citizenship & work authorization from profile <span class="muted">(flagged for review before submit)</span></label>
-      <label class="check"><input type="checkbox" id="s-block" checked disabled> Refuse protected-class / compliance fields <span class="muted">(always on — not configurable)</span></label>
+      <label class="check"><input type="checkbox" id="s-eeoc"> Auto-fill Voluntary Self-Identification / EEOC (Gender, Race, Veteran, Disability) from profile <span class="muted">(flagged for review before submit)</span></label>
+      <label class="check"><input type="checkbox" id="s-block" checked disabled> Refuse unconfigured protected-class &amp; sensitive compliance fields <span class="muted">(always on — not configurable)</span></label>
       <div class="row"><label>Fill pace (ms per field) — so you can watch it</label><input id="s-delay" type="number" step="40" min="0" max="2000"></div>
     </div>
 

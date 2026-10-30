@@ -210,7 +210,8 @@
       const parent = el.closest('td,li,.field,.form-field,.forminator-field,.wf-field,fieldset,div');
       if (parent) {
         const clone = parent.cloneNode(true);
-        clone.querySelectorAll('input,textarea,select,button,script,style').forEach((n) => n.remove());
+        const stripSelector = el.type === 'file' ? 'input,textarea,select,script,style' : 'input,textarea,select,button,script,style';
+        clone.querySelectorAll(stripSelector).forEach((n) => n.remove());
         const t = clean(clone.textContent);
         if (t && t.length < 160) bits.push(t);
       }
@@ -279,6 +280,14 @@
   function isVisible(el) {
     if (!el) return false;
     if (el.type === 'hidden' || el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.type === 'file') {
+      const parent = el.closest('form, [data-qa], [data-automation], .upload, .dropzone, section, fieldset, main, body');
+      if (parent) {
+        const pcs = getComputedStyle(parent);
+        if (pcs.display !== 'none' && pcs.visibility !== 'hidden') return true;
+      }
+      return document.body && document.body.contains(el);
+    }
     const rect = el.getBoundingClientRect();
     if (rect.width < 2 && rect.height < 2) return false;
     const cs = getComputedStyle(el);
@@ -428,8 +437,9 @@
     return el.value === value || String(el.value).length > 0;
   }
 
-  function fillSelect(desc, value) {
-    const idx = M.matchOption(desc.options, value);
+  function fillSelect(desc, value, context) {
+    const ctx = context || desc.context || desc.key;
+    const idx = M.matchOption(desc.options, value, ctx);
     if (idx < 0) return false;
     const el = desc.el;
     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value');
@@ -441,8 +451,16 @@
     return true;
   }
 
-  function fillRadio(desc, value) {
+  function fillRadio(desc, value, context) {
     const items = desc.radioLabels || [];
+    const ctx = context || desc.context || desc.key;
+    const opts = items.map((i) => ({ label: i.label }));
+    const matchIdx = M.matchOption(opts, value, ctx);
+    if (matchIdx >= 0 && items[matchIdx] && !items[matchIdx].el.checked) {
+      items[matchIdx].el.click();
+      items[matchIdx].el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
     for (const item of items) {
       const verdict = M.booleanFor(item.label, value);
       if (verdict === true) { item.el.click(); item.el.dispatchEvent(new Event('change', { bubbles: true })); return true; }
@@ -630,8 +648,8 @@
 
         desc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         let ok = false;
-        if (desc.kind === 'select') ok = fillSelect(desc, decision.value);
-        else if (desc.kind === 'radio') ok = fillRadio(desc, decision.value);
+        if (desc.kind === 'select') ok = fillSelect(desc, decision.value, decision.context || decision.key);
+        else if (desc.kind === 'radio') ok = fillRadio(desc, decision.value, decision.context || decision.key);
         else if (desc.kind === 'checkbox') ok = fillCheckbox(desc, decision.value);
         else if (desc.kind === 'editable') { desc.el.focus(); document.execCommand('insertText', false, decision.value); ok = (desc.el.textContent || '').includes(decision.value.slice(0, 24)); }
         else ok = await fillText(desc, decision.value);

@@ -406,3 +406,139 @@ test('citizenship and work authorization are autofilled when enabled in settings
   assert.equal(M.classify(qVeteran, citizenSnap, settingsOn).action, 'block');
   assert.equal(M.classify(qVeteran, citizenSnap, settingsOn).category, 'veteran');
 });
+
+test('EEOC voluntary disclosures autofill when enabled in settings', () => {
+  const eeocSnap = {
+    ...SNAP,
+    eeoc: {
+      gender: 'Male',
+      race: 'Hispanic or Latino',
+      veteran: 'I am not a protected veteran',
+      disability: 'No, I do not have a disability',
+    },
+  };
+  const settingsEEOC = { autofill_eeoc: true };
+
+  // Gender
+  const qGender = f({ label: 'Gender / Sex', tag: 'select' });
+  const rGender = M.classify(qGender, eeocSnap, settingsEEOC);
+  assert.equal(rGender.action, 'fill');
+  assert.equal(rGender.value, 'Male');
+  assert.equal(rGender.context, 'eeoc.gender');
+
+  // Race
+  const qRace = f({ label: 'Race / Ethnicity', tag: 'select' });
+  const rRace = M.classify(qRace, eeocSnap, settingsEEOC);
+  assert.equal(rRace.action, 'fill');
+  assert.equal(rRace.value, 'Hispanic or Latino');
+  assert.equal(rRace.context, 'eeoc.race');
+
+  // Veteran
+  const qVet = f({ label: 'Veteran Status', tag: 'select' });
+  const rVet = M.classify(qVet, eeocSnap, settingsEEOC);
+  assert.equal(rVet.action, 'fill');
+  assert.equal(rVet.value, 'I am not a protected veteran');
+  assert.equal(rVet.context, 'eeoc.veteran');
+
+  // Disability
+  const qDis = f({ label: 'Disability Status', tag: 'select' });
+  const rDis = M.classify(qDis, eeocSnap, settingsEEOC);
+  assert.equal(rDis.action, 'fill');
+  assert.equal(rDis.value, 'No, I do not have a disability');
+  assert.equal(rDis.context, 'eeoc.disability');
+
+  // Option matching with realistic ATS options
+  const raceOptions = [
+    { label: 'Please select' },
+    { label: 'White (Not Hispanic or Latino)' },
+    { label: 'Hispanic or Latino' },
+    { label: 'Black or African American' },
+    { label: 'Asian' },
+  ];
+  assert.equal(M.matchOption(raceOptions, 'Hispanic or Latino', 'eeoc.race'), 2);
+
+  const vetOptions = [
+    { label: 'Select status' },
+    { label: 'I identify as one or more of the classifications of protected veteran' },
+    { label: 'I am not a protected veteran' },
+    { label: 'I decline to state' },
+  ];
+  assert.equal(M.matchOption(vetOptions, 'I am not a protected veteran', 'eeoc.veteran'), 2);
+
+  const disOptions = [
+    { label: 'Select' },
+    { label: 'Yes, I have a disability, or have a history/record of having a disability' },
+    { label: 'No, I do not have a disability, or have a history/record of having a disability' },
+    { label: 'I do not wish to answer' },
+  ];
+  assert.equal(M.matchOption(disOptions, 'No, I do not have a disability', 'eeoc.disability'), 2);
+});
+
+test('School other fallback and education date and major matching', () => {
+  const schoolOptions = [
+    { label: 'Please select institution' },
+    { label: 'Harvard University' },
+    { label: 'Stanford University' },
+    { label: 'Other' },
+  ];
+  // Foreign or unlisted school falls back to 'Other'
+  assert.equal(M.matchOption(schoolOptions, 'Universidad de Oriente', 'edu.school'), 3);
+
+  const eduSnap = {
+    ...SNAP,
+    education: [{
+      degree: 'B.S. in Computer Science',
+      school: 'Universidad de Oriente',
+      field: 'Computer Science',
+      minor: 'Mathematics',
+      start_year: '1990',
+      start_month: 'September',
+      end_year: '1995',
+      end_month: 'July',
+    }],
+  };
+
+  const fStartMo = f({ label: 'From Month', tag: 'select', section: 'Education' });
+  const rStartMo = M.classify(fStartMo, eduSnap, {});
+  assert.equal(rStartMo.key, 'edu.start_month');
+  assert.equal(rStartMo.value, 'September');
+
+  const fStartYr = f({ label: 'From Year', tag: 'select', section: 'Education' });
+  const rStartYr = M.classify(fStartYr, eduSnap, {});
+  assert.equal(rStartYr.key, 'edu.start_year');
+  assert.equal(rStartYr.value, '1990');
+
+  const fMajor = f({ label: 'Major', tag: 'input', section: 'Education' });
+  const rMajor = M.classify(fMajor, eduSnap, {});
+  assert.equal(rMajor.key, 'edu.major');
+  assert.equal(rMajor.value, 'Computer Science');
+
+  const fMinor = f({ label: 'Minor', tag: 'input', section: 'Education' });
+  const rMinor = M.classify(fMinor, eduSnap, {});
+  assert.equal(rMinor.key, 'edu.minor');
+  assert.equal(rMinor.value, 'Mathematics');
+});
+
+test('Address line 1 vs line 2 separation', () => {
+  const addrSnap = {
+    ...SNAP,
+    address: {
+      line1: '5 1/2 S Jefferson Ave',
+      line2: 'Suite 200',
+      city: 'Iola',
+      state: 'Kansas',
+      postal_code: '66749',
+      country: 'United States',
+    },
+  };
+
+  const fLine1 = f({ label: 'Address Line 1', tag: 'input' });
+  const rLine1 = M.classify(fLine1, addrSnap, {});
+  assert.equal(rLine1.key, 'address.line1');
+  assert.equal(rLine1.value, '5 1/2 S Jefferson Ave');
+
+  const fLine2 = f({ label: 'Address Line 2', tag: 'input' });
+  const rLine2 = M.classify(fLine2, addrSnap, {});
+  assert.equal(rLine2.key, 'address.line2');
+  assert.equal(rLine2.value, 'Suite 200');
+});

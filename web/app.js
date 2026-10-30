@@ -173,10 +173,29 @@ function renderProfile() {
   const p = PROFILE;
   const set = (id, v) => { const el = $(id); if (el) el.value = v == null ? '' : v; };
   set('#p-name', p.name); set('#p-email', p.email); set('#p-phone', p.phone);
+  const addr = p.address || {};
+  set('#p-addr1', addr.address_line1 || addr.line1);
+  set('#p-addr2', addr.address_line2 || addr.line2);
+  set('#p-city', addr.city);
+  set('#p-state', addr.state);
+  set('#p-postal', addr.postal_code || addr.postal);
+  set('#p-country', addr.country || 'United States');
   set('#p-location', p.location); set('#p-headline', p.headline); set('#p-pronouns', p.pronouns);
   set('#p-linkedin', (p.links || {}).linkedin); set('#p-github', (p.links || {}).github); set('#p-other', (p.links || {}).other);
   set('#p-salary', p.salary_expectation); set('#p-relocation', p.relocation);
-  set('#p-start', p.start_date); set('#p-notice', p.notice_period); set('#p-workauth', p.work_authorization_note);
+  const prefs = p.preferences || {};
+  set('#p-willing-relocate', prefs.willing_to_relocate != null ? (prefs.willing_to_relocate ? 'Yes' : 'No') : 'Yes');
+  set('#p-start', p.start_date); set('#p-notice', p.notice_period);
+  set('#p-howheard', prefs.how_heard);
+  const wa = p.work_authorization || {};
+  set('#p-wa-status', wa.status || (wa.is_citizen ? 'U.S. Citizen' : ''));
+  set('#p-wa-sponsor', wa.requires_sponsorship ? 'Yes' : 'No');
+  set('#p-workauth', p.work_authorization_note);
+  const eeoc = p.eeoc || {};
+  set('#p-eeoc-gender', eeoc.gender);
+  set('#p-eeoc-race', eeoc.race);
+  set('#p-eeoc-veteran', eeoc.veteran);
+  set('#p-eeoc-disability', eeoc.disability);
   set('#p-resume', p.master_resume_markdown); set('#p-summary', p.summary);
   set('#p-skills', (p.skills || []).join(', ')); set('#p-certs', (p.certifications || []).join(', '));
   set('#p-languages', (p.languages || []).join(', '));
@@ -238,10 +257,15 @@ const EXP_FIELDS = [
   { key: 'tech', label: 'Tools / tech used here (comma separated)', list: true },
 ];
 const EDU_FIELDS = [
-  { key: 'school', label: 'School', ph: 'UC Berkeley' },
-  { key: 'degree', label: 'Degree', ph: 'BS' },
-  { key: 'field', label: 'Field', ph: 'EECS' },
-  { key: 'start', label: 'Start', cal: 'y' }, { key: 'end', label: 'End', cal: 'y' },
+  { key: 'school', label: 'School / Institution', ph: 'UC Berkeley' },
+  { key: 'degree', label: 'Degree / Level', ph: 'BS' },
+  { key: 'field', label: 'Major / Field of study', ph: 'EECS' },
+  { key: 'minor', label: 'Minor', ph: 'Optional' },
+  { key: 'start_year', label: 'Start Year', cal: 'y', ph: '2014' },
+  { key: 'start_month', label: 'Start Month', ph: 'September' },
+  { key: 'end_year', label: 'End / Grad Year', cal: 'y', ph: '2018' },
+  { key: 'end_month', label: 'End Month', ph: 'May' },
+  { key: 'school_fallback', label: 'Fallback if unlisted', ph: 'Other' },
   { key: 'notes', label: 'Notes (honours, thesis)' },
 ];
 const BOIL_FIELDS = [
@@ -370,13 +394,45 @@ $('#p-file').onchange = async (e) => {
 };
 
 function profileFromForm() {
+  const city = ($('#p-city') ? $('#p-city').value.trim() : '');
+  const state = ($('#p-state') ? $('#p-state').value.trim() : '');
+  const country = ($('#p-country') ? $('#p-country').value.trim() : 'United States');
+  const locFallback = [city, state, country].filter(Boolean).join(', ');
+  const locVal = ($('#p-location') && $('#p-location').value.trim()) || locFallback;
+
   return {
     name: $('#p-name').value.trim(), email: $('#p-email').value.trim(), phone: $('#p-phone').value.trim(),
-    location: $('#p-location').value.trim(), headline: $('#p-headline').value.trim(), pronouns: $('#p-pronouns').value.trim(),
+    address: {
+      address_line1: ($('#p-addr1') ? $('#p-addr1').value.trim() : ''),
+      address_line2: ($('#p-addr2') ? $('#p-addr2').value.trim() : ''),
+      city: city,
+      state: state,
+      postal_code: ($('#p-postal') ? $('#p-postal').value.trim() : ''),
+      country: country,
+    },
+    location: locVal, headline: $('#p-headline').value.trim(), pronouns: $('#p-pronouns').value.trim(),
     links: { ...(PROFILE.links || {}), linkedin: $('#p-linkedin').value.trim(), github: $('#p-github').value.trim(), other: $('#p-other').value.trim() },
     salary_expectation: $('#p-salary').value.trim(), relocation: $('#p-relocation').value.trim(),
+    preferences: {
+      ...(PROFILE.preferences || {}),
+      willing_to_relocate: $('#p-willing-relocate') ? $('#p-willing-relocate').value === 'Yes' : true,
+      how_heard: ($('#p-howheard') ? $('#p-howheard').value.trim() : ''),
+      work_model: $('#p-relocation').value.trim(),
+    },
     start_date: $('#p-start').value.trim(), notice_period: $('#p-notice').value.trim(),
+    work_authorization: {
+      status: ($('#p-wa-status') ? $('#p-wa-status').value.trim() : ''),
+      is_citizen: $('#p-wa-status') ? ($('#p-wa-status').value === 'U.S. Citizen' || $('#p-wa-status').value === 'citizen') : true,
+      authorized: true,
+      requires_sponsorship: $('#p-wa-sponsor') ? $('#p-wa-sponsor').value === 'Yes' : false,
+    },
     work_authorization_note: $('#p-workauth').value.trim(),
+    eeoc: {
+      gender: ($('#p-eeoc-gender') ? $('#p-eeoc-gender').value.trim() : ''),
+      race: ($('#p-eeoc-race') ? $('#p-eeoc-race').value.trim() : ''),
+      veteran: ($('#p-eeoc-veteran') ? $('#p-eeoc-veteran').value.trim() : ''),
+      disability: ($('#p-eeoc-disability') ? $('#p-eeoc-disability').value.trim() : ''),
+    },
     master_resume_markdown: $('#p-resume').value, summary: $('#p-summary').value.trim(),
     skills: $('#p-skills').value.split(',').map((s) => s.trim()).filter(Boolean),
     certifications: $('#p-certs').value.split(',').map((s) => s.trim()).filter(Boolean),
@@ -412,23 +468,34 @@ async function loadJobs() {
     const el = document.createElement('div');
     el.className = 'item';
     const statusBadge = { saved: 'blue', prepared: 'blue', packet: 'warn', autofilled: 'warn', applied: 'ok', submitted: 'ok' }[j.status] || '';
+    const hasPacket = !!j.packet_id;
+    const isApplied = j.status === 'applied' || !!j.applied_at;
+    const appliedText = j.applied_at ? `Applied ${esc(j.applied_at.slice(0, 10))}` : '';
+    const fillStats = (j.fill_stats && j.fill_stats.filled != null) ? `${j.fill_stats.filled} fields filled` : '';
     el.innerHTML = `
-      <h3>${esc(j.title || '(untitled)')} <span class="badge ${statusBadge}">${esc(j.status)}</span></h3>
+      <h3>${esc(j.title || '(untitled)')} <span class="badge ${statusBadge}">${esc(j.status)}</span> ${isApplied && appliedText ? `<span class="badge ok">${appliedText}</span>` : ''}</h3>
       <div class="meta">
         <span>${esc(j.company || '—')}</span><span>${esc(j.location || '')}</span>
         <span>${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(j.url).hostname)}</a>` : esc(j.source || '')}</span>
         <span>${(j.description_preview || '').length} chars</span>
+        ${fillStats ? `<span class="pill">${fillStats}</span>` : ''}
         <span>${j.applied_at ? `Applied ${esc(j.applied_at.slice(0, 10))}` : esc(j.created_at || '').slice(0, 10)}</span>
       </div>
       <div class="muted" style="margin-bottom:8px">${esc(j.description_preview || '')}…</div>
       <div class="actions">
-        <button data-act="build" class="primary">Build packet</button>
+        ${hasPacket ? `<button data-act="open-packet" class="primary">Inspect packet</button>` : `<button data-act="build" class="primary">Build packet</button>`}
+        ${hasPacket ? `<a class="btnlike" href="/api/packets/${esc(j.packet_id)}/resume.docx" download>Resume .docx</a>` : ''}
         <button data-act="cover">${j.draft_cover ? 'Cover letter ✓' : 'Cover letter'}</button>
         <button data-act="view">Read full</button>
         ${j.url ? `<a class="btnlike" href="${esc(j.url)}" target="_blank" rel="noopener noreferrer">Open posting</a>` : ''}
         <button data-act="del">Delete</button>
       </div>`;
-    el.querySelector('[data-act=build]').onclick = () => buildPacket({ job_id: j.id }, el.querySelector('[data-act=build]'));
+    if (el.querySelector('[data-act=build]')) {
+      el.querySelector('[data-act=build]').onclick = () => buildPacket({ job_id: j.id }, el.querySelector('[data-act=build]'));
+    }
+    if (el.querySelector('[data-act=open-packet]')) {
+      el.querySelector('[data-act=open-packet]').onclick = () => openPacket(j.packet_id);
+    }
     el.querySelector('[data-act=cover]').onclick = async (ev) => coverAction(ev.currentTarget, j);
     el.querySelector('[data-act=view]').onclick = async () => {
       const full = await api('/api/jobs/' + j.id);
@@ -793,6 +860,8 @@ async function loadSettings() {
   $('#s-upload').checked = s.autofill.upload_documents;
   const workAuthBox = $('#s-workauth');
   if (workAuthBox) workAuthBox.checked = s.autofill.autofill_work_auth !== false;
+  const eeocBox = $('#s-eeoc');
+  if (eeocBox) eeocBox.checked = s.autofill.autofill_eeoc !== false;
   $('#s-delay').value = s.autofill.visible_delay_ms;
   $('#s-tailor').checked = s.packets.tailor_resume;
   $('#s-letter').checked = s.packets.write_cover_letter;
@@ -823,6 +892,7 @@ $('#s-save').onclick = async () => {
       overwrite_filled: $('#s-overwrite').checked, click_navigation: $('#s-nav').checked,
       upload_documents: $('#s-upload').checked, refuse_blocked_fields: true,
       autofill_work_auth: $('#s-workauth') ? $('#s-workauth').checked : true,
+      autofill_eeoc: $('#s-eeoc') ? $('#s-eeoc').checked : true,
       visible_delay_ms: parseInt($('#s-delay').value || '260', 10),
     },
     packets: { tailor_resume: $('#s-tailor').checked, write_cover_letter: $('#s-letter').checked, resume_pages: parseInt($('#s-pages').value || '1', 10) },

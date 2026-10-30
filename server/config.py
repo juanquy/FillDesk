@@ -146,6 +146,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "highlight_filled": True,
         "refuse_blocked_fields": True,
         "autofill_work_auth": True,    # auto-fill citizenship & work authorization from profile
+        "autofill_eeoc": True,         # auto-fill voluntary self-identification (race, gender, veteran, disability)
     },
     "packets": {
         "tailor_resume": True,
