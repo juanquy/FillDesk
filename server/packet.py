@@ -997,8 +997,8 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
             "cover_letter_txt": f"/api/packets/{packet['id']}/file?fmt=txt&type=cover",
         },
         "doc_names": {
-            "resume": f"{store.slug(packet.get('company') or 'resume')}-{store.slug(packet.get('title') or 'application')}.docx",
-            "cover_letter": f"{store.slug(packet.get('company') or 'resume')}-cover-letter.docx",
+            "resume": f"{store.slug(profile.get('name') or 'resume')}-resume-{store.slug(packet.get('company') or '')}.docx" if packet.get("company") else f"{store.slug(profile.get('name') or 'resume')}-resume.docx",
+            "cover_letter": f"{store.slug(profile.get('name') or 'resume')}-cover-letter-{store.slug(packet.get('company') or '')}.docx" if packet.get("company") else f"{store.slug(profile.get('name') or 'resume')}-cover-letter.docx",
         },
     }
 
@@ -1030,8 +1030,10 @@ def build_profile_snapshot_from_profile(profile: dict, job: dict | None = None) 
         "cover_letter_docx": "",
         "cover_letter_txt": "",
     }
+    cand_name = store.slug(profile.get('name') or 'resume')
+    comp_name = store.slug(job.get('company') or '') if job else ''
     snap["doc_names"] = {
-        "resume": f"{store.slug(profile.get('name') or 'resume')}.docx",
+        "resume": f"{cand_name}-resume-{comp_name}.docx" if comp_name else f"{cand_name}-resume.docx",
         "cover_letter": "",
     }
     return snap

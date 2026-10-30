@@ -70,11 +70,11 @@
     { key: 'address.postal', rx: /zip|postal|post ?code/, autocomplete: ['postal-code'] },
     { key: 'address.country', rx: /\bcountry\b|nation/, autocomplete: ['country-name', 'country'] },
     { key: 'identity.timezone', rx: /time ?zone/ },
-    { key: 'links.linkedin', rx: /linked ?in/ },
-    { key: 'links.github', rx: /github/ },
-    { key: 'links.portfolio', rx: /portfolio|personal (site|website|page)|website|url|online presence|dribbble|behance/ },
-    { key: 'links.twitter', rx: /twitter|x\.com|bluesky|mastodon/ },
-    { key: 'links.other', rx: /other (link|url|profile)|additional (link|url)|social (media|link)/ },
+    { key: 'links.linkedin', types: ['text', 'url', 'textarea'], rx: /linked ?in/ },
+    { key: 'links.github', types: ['text', 'url', 'textarea'], rx: /github/ },
+    { key: 'links.portfolio', types: ['text', 'url', 'textarea'], rx: /portfolio|personal (site|website|page)|website|url|online presence|dribbble|behance/ },
+    { key: 'links.twitter', types: ['text', 'url', 'textarea'], rx: /twitter|x\.com|bluesky|mastodon/ },
+    { key: 'links.other', types: ['text', 'url', 'textarea'], rx: /other (link|url|profile)|additional (link|url)|social (media|link)/ },
 
     // -- documents
     { key: 'doc.resume', types: ['file'], rx: /(resume|résumé|resumé|curriculum vitae|cv\b|latest resume|current resume|upload your resume)/ },
@@ -391,7 +391,7 @@
   }
 
   function booleanFor(text, wanted) {
-    // Decide yes/no for a checkbox or radio group from a value like "yes" or a URL.
+    // Decide yes/no for a checkbox or radio group from a value like "yes" or an option name.
     const label = normalizeOption(text);
     const w = normalizeOption(wanted);
     if (/^(yes|y|true|1|current|present|available)\b/.test(w)) {
@@ -402,7 +402,54 @@
       if (/\bno\b|^n$|non/.test(label)) return true;
       if (/yes/.test(label)) return false;
     }
+    if (w && label && !/^(yes|no|true|false)\b/.test(w) && (label === w || label.includes(w) || w.includes(label))) return true;
     return null;
+  }
+
+  function isProficiencyOptions(options) {
+    if (!options || options.length < 2) return false;
+    const labels = options.map((o) => normalizeOption(o.label || ''));
+    const matches = labels.filter((l) => /\b(none|beginner|intermediate|advanced|expert|novice|proficient|competent|foundational)\b/i.test(l));
+    return matches.length >= 2;
+  }
+
+  function rateSkillExperience(topic, snap) {
+    const t = norm(topic)
+      .replace(/\b(how would you rate|rate your (level of )?experience with|level of (your )?experience with|experience with|familiarity with|proficiency in|what is your)\b/gi, '')
+      .replace(/[*?:!]/g, '')
+      .trim();
+    if (!t) return 'Intermediate';
+
+    const words = t.split(/\s+/).filter((w) => w.length > 2 && !/^(the|and|for|with|your|about|this|that|from)\b/i.test(w));
+
+    const candidateText = norm([
+      (snap.skills || []).join(' '),
+      snap.resume_markdown || snap.master_resume_markdown || '',
+      (snap.experience || []).map((e) => (e.title || '') + ' ' + (e.bullets || []).join(' ')).join(' '),
+      snap.summary || '',
+    ].join(' '));
+
+    let hits = 0;
+    for (const w of words) {
+      if (candidateText.includes(w)) hits++;
+    }
+
+    if (/\b(script|scripts|scripting|automate|automation)\b/i.test(t)) {
+      if (/\b(powershell|python|bash|scripting|automation|automate|n8n)\b/i.test(candidateText)) hits += 3;
+    }
+    if (/\b(vendor|vendors)\b/i.test(t)) {
+      if (/\b(vendor|vendors|sla)\b/i.test(candidateText)) hits += 3;
+    }
+    if (/\b(endpoint|endpoints|endpoint management|endpoint tools)\b/i.test(t)) {
+      if (/\b(endpoint|intune|defender|ninjaone|rmm|mdm)\b/i.test(candidateText)) hits += 3;
+    }
+    if (/\b(aws|amazon web services)\b/i.test(t)) {
+      if (/\b(aws|cloud|security)\b/i.test(candidateText)) hits += 2;
+    }
+
+    if (hits >= 3) return 'Advanced';
+    if (hits >= 1) return 'Intermediate';
+    return 'Beginner';
   }
 
   // ------------------------------------------------------------------ value shaping
@@ -794,6 +841,23 @@
       });
     }
 
+    const isRating = isProficiencyOptions(field.radioLabels || field.options) &&
+      /\b(rate your (level of )?experience|level of (your )?experience|how would you rate|experience with|familiarity with|proficiency in)\b/i.test(n);
+    if (isRating) {
+      const qText = field.label || field.groupLabel || field.legend || '';
+      const level = rateSkillExperience(qText, snap);
+      return {
+        action: 'fill',
+        key: 'skill_rating:' + clip(qText, 50),
+        value: level,
+        confidence: 0.85,
+        category: 'skill_rating',
+        review: 'rating',
+        method: 'skill_rating',
+        context: 'skill_rating',
+      };
+    }
+
     if (proseTarget && looksLikeQuestion(field) && !factRuleAhead()) {
       const attempt = answerAttempt();
       if (attempt.action) { Object.assign(out, attempt); return out; }
@@ -802,16 +866,28 @@
     // 4. structural rules
     let chosen = null;
     let ruleAutocomplete = null;
-    for (const rule of RULES) {
-      if (rule.requires === 'date' && !looksLikeDate(field)) continue;
-      if (rule.requires === 'employment' && !(looksLikeDate(field) && employmentContext(field))) continue;
-      if (rule.requires === 'education' && !(looksLikeDate(field) && educationContext(field))) continue;
-      if (rule.types && field.tag !== 'input' && field.tag !== 'textarea' && field.tag !== 'select' && field.tag !== 'file') continue;
-      if (rule.types && rule.types.indexOf(field.type) < 0 && rule.types.indexOf(field.tag) < 0) continue;
-      let hit = false;
-      if (rule.rx.test(n)) hit = true;
-      if (!hit && rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0) hit = true;
-      if (hit) { chosen = rule; ruleAutocomplete = rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0; break; }
+    if (field.groupLabel && (field.type === 'checkbox' || field.kind === 'checkbox' || field.type === 'radio' || field.kind === 'radio')) {
+      const gNorm = norm(field.groupLabel);
+      for (const rule of RULES) {
+        if (rule.rx.test(gNorm)) {
+          chosen = rule;
+          break;
+        }
+      }
+    }
+    if (!chosen) {
+      for (const rule of RULES) {
+        if (rule.requires === 'date' && !looksLikeDate(field)) continue;
+        if (rule.requires === 'employment' && !(looksLikeDate(field) && employmentContext(field))) continue;
+        if (rule.requires === 'education' && !(looksLikeDate(field) && educationContext(field))) continue;
+        if (rule.types && field.tag !== 'input' && field.tag !== 'textarea' && field.tag !== 'select' && field.tag !== 'file') continue;
+        if (rule.types && rule.types.indexOf(field.type) < 0 && rule.types.indexOf(field.tag) < 0) continue;
+        let hit = false;
+        if (rule.rx.test(n)) hit = true;
+        if (!hit && rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0) hit = true;
+        if (!hit && rule.key === 'identity.phone' && field.type === 'tel') hit = true;
+        if (hit) { chosen = rule; ruleAutocomplete = rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0; break; }
+      }
     }
 
     if (chosen) {
@@ -904,6 +980,20 @@
         if (chosen.key === 'misc.how_heard') {
           value = (snap.preferences && snap.preferences.how_heard) || resolve('misc.how_heard', snap) || '';
           if (!value) { out.action = 'skip'; out.reason = 'only you know how you found it'; return out; }
+          if (field.type === 'checkbox' || field.kind === 'checkbox') {
+            const isMatch = booleanFor(field.label, value);
+            if (isMatch === true) {
+              out.action = 'fill';
+              out.value = 'yes';
+              out.confidence = 0.95;
+              out.method = 'checkbox-match';
+              return out;
+            } else {
+              out.action = 'skip';
+              out.reason = 'not selected';
+              return out;
+            }
+          }
         }
         if (chosen.key === 'misc.work_model') {
           value = (snap.preferences && snap.preferences.work_model) || resolve('misc.work_model', snap) || value;
@@ -981,6 +1071,6 @@
     formatDate, parseDate, datePrecision, dateHintFor, looksLikeDate, looksLikeQuestion,
     employmentContext, educationContext,
     splitLocation, digits, isSubmitText, isNextText, intentOf, BLOCKED, REVIEW, RULES, INTENTS, overlap,
-    getWorkAuthInfo, classifyWorkAuth, classifyEEOC,
+    getWorkAuthInfo, classifyWorkAuth, classifyEEOC, isProficiencyOptions, rateSkillExperience,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

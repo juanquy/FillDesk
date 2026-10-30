@@ -178,6 +178,72 @@
     return clean(el.textContent || '');
   }
 
+  function isGenericPlaceholder(s) {
+    if (!s) return true;
+    const low = clean(s).toLowerCase().replace(/\.+$/, '');
+    return /^(type here|enter text|write here|your answer|please enter|enter here|type|write|text|n\/a|na|none|select|please select|choose|search)$/i.test(low);
+  }
+
+  function fieldQuestionTitle(el) {
+    if (!el) return '';
+    const containerSelector = [
+      '.ashby-application-form-field-entry',
+      '[class*="field-entry"]',
+      '[class*="FieldEntry"]',
+      '[class*="form-field"]',
+      '[class*="FormField"]',
+      '[class*="form-group"]',
+      '[class*="question-container"]',
+      '[class*="application-question"]',
+      '[data-qa*="field"]',
+      '[data-automation*="field"]',
+      'fieldset',
+      '.field',
+      'tr',
+      'li',
+    ].join(',');
+    const titleSelector = [
+      '.ashby-application-form-question-title',
+      '[class*="question-title"]',
+      '[class*="QuestionTitle"]',
+      '[class*="field-label"]',
+      '[class*="FieldLabel"]',
+      '[class*="question-text"]',
+      '[class*="field-title"]',
+      '[class*="FieldTitle"]',
+      'legend',
+      'label:not([class*="option"]):not([class*="choice"])',
+      'h1,h2,h3,h4,h5,h6',
+      '[role="heading"]',
+    ].join(',');
+
+    let container = el.closest(containerSelector);
+    if (container) {
+      const titleEl = container.querySelector(titleSelector);
+      if (titleEl && !titleEl.contains(el)) {
+        const t = clean(titleEl.textContent);
+        if (t && t.length < 240) return t;
+      }
+    }
+
+    let curr = el.parentElement;
+    for (let depth = 0; depth < 5 && curr && curr !== document.body; depth++, curr = curr.parentElement) {
+      const titleEl = curr.querySelector(titleSelector);
+      if (titleEl && !titleEl.contains(el)) {
+        const t = clean(titleEl.textContent);
+        if (t && t.length < 240) return t;
+      }
+      let sib = curr.previousElementSibling;
+      for (let hops = 0; sib && hops < 3; hops++, sib = sib.previousElementSibling) {
+        if (sib.matches(titleSelector)) {
+          const t = clean(sib.textContent);
+          if (t && t.length < 240) return t;
+        }
+      }
+    }
+    return '';
+  }
+
   function labelText(el) {
     const bits = [];
     if (el.getAttribute('aria-labelledby')) {
@@ -195,7 +261,12 @@
       if (direct) bits.unshift(textOf(direct));
     }
     const wrapping = el.closest('label');
-    if (wrapping) bits.unshift(clean(wrapping.textContent.replace(el.value || '', '')));
+    if (wrapping && el.type !== 'radio' && el.type !== 'checkbox') {
+      bits.unshift(clean(wrapping.textContent.replace(el.value || '', '')));
+    }
+
+    const qTitle = fieldQuestionTitle(el);
+    if (qTitle) bits.push(qTitle);
 
     if (!bits.length || bits.every((b) => !b)) {
       // Common ATS markup: <label>text</label> immediately before the control,
@@ -207,19 +278,22 @@
       }
     }
     if (!bits.length || bits.every((b) => !b)) {
-      const parent = el.closest('td,li,.field,.form-field,.forminator-field,.wf-field,fieldset,div');
-      if (parent) {
+      let parent = el.closest('td,li,.field,.form-field,.forminator-field,.wf-field,fieldset,[class*="field-entry"],[class*="form-group"]');
+      if (!parent) parent = el.parentElement;
+      for (let depth = 0; depth < 4 && parent && parent !== document.body; depth++, parent = parent.parentElement) {
         const clone = parent.cloneNode(true);
         const stripSelector = el.type === 'file' ? 'input,textarea,select,script,style' : 'input,textarea,select,button,script,style';
         clone.querySelectorAll(stripSelector).forEach((n) => n.remove());
         const t = clean(clone.textContent);
-        if (t && t.length < 160) bits.push(t);
+        if (t && t.length < 160) { bits.push(t); break; }
       }
     }
     const legend = el.closest('fieldset') ? textOf(el.closest('fieldset').querySelector('legend')) : '';
     const heading = nearestHeading(el);
+    const placeholder = el.getAttribute('placeholder');
+    const safePlaceholder = !isGenericPlaceholder(placeholder) ? placeholder : '';
     return {
-      label: clean(bits.find(Boolean) || el.getAttribute('placeholder') || el.getAttribute('title') || humanize(el.name || el.id || '')),
+      label: clean(bits.find(Boolean) || safePlaceholder || el.getAttribute('title') || humanize(el.name || el.id || '')),
       legend: clean(legend),
       section: clean(heading),
     };
@@ -246,9 +320,9 @@
   // them. Without this, a yes/no EEO question reads as a field called "Yes".
   function groupContext(el, kind) {
     if (kind !== 'radio' && kind !== 'checkbox') return '';
-    const wrapping = el.closest('label');
-    if (wrapping && clean(wrapping.textContent).length >= 22) return '';
-    let container = el.closest('[role="radiogroup"],[role="group"],fieldset,.radios,.radio-group,.choice,.form-group,.field,td,li,div');
+    const qTitle = fieldQuestionTitle(el);
+    if (qTitle) return qTitle;
+    let container = el.closest('[role="radiogroup"],[role="group"],fieldset,.radios,.radio-group,.choice,.form-group,.field,td,li');
     for (let up = 0; up < 5 && container; up++, container = container.parentElement) {
       let sib = container.previousElementSibling;
       for (let hops = 0; sib && hops < 6; hops++, sib = sib.previousElementSibling) {
@@ -309,17 +383,49 @@
     const nodes = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="textbox"]'));
     const out = [];
     const seenRadioGroups = new Set();
+    const handledContainers = new Set();
+
+    // 1. Detect custom segmented controls (e.g. AshbyHQ Yes/No segmented button pairs)
+    const segmentedContainers = Array.from(document.querySelectorAll('.ashby-application-form-input-yesno, [class*="input-yesno"], [data-qa*="yesno"]'));
+    for (const container of segmentedContainers) {
+      if (container.closest('[data-filldesk-panel]') || container.closest('nav')) continue;
+      const buttons = Array.from(container.querySelectorAll('button[data-option], button')).filter(isVisible);
+      if (buttons.length >= 2) {
+        handledContainers.add(container);
+        out.push({ el: buttons[0], kind: 'radio', group: buttons, isCustomRadio: true, container });
+      }
+    }
+
     for (const el of nodes) {
       if (el.closest('[data-filldesk-panel]') || el.closest('nav')) continue;
+      let inHandled = false;
+      for (const hc of handledContainers) {
+        if (hc.contains(el)) { inHandled = true; break; }
+      }
+      if (inHandled) continue;
+
       const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
       if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue;
       if (type === 'radio') {
-        const name = el.name || 'anon-' + out.length;
-        if (seenRadioGroups.has(name)) continue;
-        seenRadioGroups.add(name);
-        const group = el.name ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)) : [el];
-        out.push({ el, kind: 'radio', group });
-        continue;
+        const name = el.name;
+        if (name) {
+          if (seenRadioGroups.has(name)) continue;
+          seenRadioGroups.add(name);
+          const group = Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`));
+          out.push({ el, kind: 'radio', group });
+          continue;
+        } else {
+          const parentGroup = el.closest('[role="radiogroup"], fieldset, [class*="radio-group"], [class*="radiogroup"], .ashby-application-form-field-entry');
+          if (parentGroup) {
+            if (handledContainers.has(parentGroup)) continue;
+            handledContainers.add(parentGroup);
+            const group = Array.from(parentGroup.querySelectorAll('input[type="radio"]'));
+            out.push({ el: group[0] || el, kind: 'radio', group });
+            continue;
+          }
+          out.push({ el, kind: 'radio', group: [el] });
+          continue;
+        }
       }
       if (type === 'checkbox') { out.push({ el, kind: 'checkbox' }); continue; }
       if (el.tagName === 'SELECT') { out.push({ el, kind: 'select' }); continue; }
@@ -336,18 +442,20 @@
     const effectiveSection = inferredSection(el, section);
     const type = kind === 'radio' ? 'radio' : kind === 'checkbox' ? 'checkbox' : kind === 'select' ? 'select'
       : kind === 'textarea' ? 'textarea' : (el.type || 'text').toLowerCase();
+    const grp = groupContext(el, kind);
+    const effectiveLabel = (kind === 'radio' && grp) ? grp : label;
     return {
       el, kind,
       tag: kind === 'editable' ? 'textarea' : el.tagName.toLowerCase(),
       type,
-      label, legend,
+      label: effectiveLabel, legend,
       section: effectiveSection,
       name: el.name || '',
       id: el.id || '',
       testid: el.getAttribute('data-qa') || el.getAttribute('data-testid') || el.getAttribute('data-automation') || el.getAttribute('data-automation-name') || '',
       placeholder: el.getAttribute('placeholder') || '',
       aria: el.getAttribute('aria-label') || '',
-      groupLabel: groupContext(el, kind),
+      groupLabel: grp,
       title: el.getAttribute('title') || '',
       autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
       help: (() => {
@@ -366,6 +474,9 @@
   }
 
   function radioLabel(radio) {
+    if (radio.tagName === 'BUTTON') {
+      return clean(radio.textContent) || radio.getAttribute('data-option') || '';
+    }
     const l = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
     if (l) return textOf(l);
     const wrap = radio.closest('label');
@@ -456,17 +567,31 @@
     const ctx = context || desc.context || desc.key;
     const opts = items.map((i) => ({ label: i.label }));
     const matchIdx = M.matchOption(opts, value, ctx);
-    if (matchIdx >= 0 && items[matchIdx] && !items[matchIdx].el.checked) {
-      items[matchIdx].el.click();
-      items[matchIdx].el.dispatchEvent(new Event('change', { bubbles: true }));
+    if (matchIdx >= 0 && items[matchIdx]) {
+      const target = items[matchIdx].el;
+      const isAlreadyChecked = target.checked || target.getAttribute('aria-pressed') === 'true';
+      if (!isAlreadyChecked) {
+        target.click();
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
       return true;
     }
     for (const item of items) {
       const verdict = M.booleanFor(item.label, value);
-      if (verdict === true) { item.el.click(); item.el.dispatchEvent(new Event('change', { bubbles: true })); return true; }
+      const isAlreadyChecked = item.el.checked || item.el.getAttribute('aria-pressed') === 'true';
+      if (verdict === true && !isAlreadyChecked) {
+        item.el.click();
+        item.el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
     }
     for (const item of items) {
-      if (M.normalizeOption(item.label) === M.normalizeOption(value)) { item.el.click(); return true; }
+      const isAlreadyChecked = item.el.checked || item.el.getAttribute('aria-pressed') === 'true';
+      if (M.normalizeOption(item.label) === M.normalizeOption(value) && !isAlreadyChecked) {
+        item.el.click();
+        return true;
+      }
     }
     return false;
   }

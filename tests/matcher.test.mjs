@@ -542,3 +542,83 @@ test('Address line 1 vs line 2 separation', () => {
   assert.equal(rLine2.key, 'address.line2');
   assert.equal(rLine2.value, 'Suite 200');
 });
+
+test('Ashby HQ fields: phone type=tel, checkbox how_heard, and skill proficiency ratings', () => {
+  const ashbySnap = {
+    ...SNAP,
+    preferences: {
+      how_heard: 'LinkedIn',
+    },
+    skills: [
+      'Microsoft 365', 'Defender for Endpoint', 'NinjaOne RMM', 'Intune', 'PowerShell automation',
+      'Python', 'Bash', 'n8n', 'Vendor & SLA Management', 'Cybersecurity', 'AWS security'
+    ],
+    resume_markdown: 'Senior DevOps Specialist. Managed vendor relationships. PowerShell automation, Python, Bash.',
+  };
+
+  // 1. Phone with type="tel" and generic label
+  const fPhone = f({ label: 'Type here...', type: 'tel', tag: 'input' });
+  const rPhone = M.classify(fPhone, ashbySnap, {});
+  assert.equal(rPhone.key, 'identity.phone');
+  assert.equal(rPhone.value, '+14155550100');
+
+  // 2. Checkboxes for "How did you hear about us?"
+  const fHeardLinkedIn = f({ label: 'LinkedIn', type: 'checkbox', tag: 'input', groupLabel: 'How did you hear about us?*' });
+  const rHeardLinkedIn = M.classify(fHeardLinkedIn, ashbySnap, {});
+  assert.equal(rHeardLinkedIn.action, 'fill');
+  assert.equal(rHeardLinkedIn.value, 'yes');
+
+  const fHeardReferral = f({ label: 'Employee Referral', type: 'checkbox', tag: 'input', groupLabel: 'How did you hear about us?*' });
+  const rHeardReferral = M.classify(fHeardReferral, ashbySnap, {});
+  assert.equal(rHeardReferral.action, 'skip');
+
+  // 3. Skill rating proficiency radio groups
+  const ratingOpts = [
+    { label: "None: I haven't worked directly" },
+    { label: "Beginner: I have foundational knowledge" },
+    { label: "Intermediate: I have hands-on experience" },
+    { label: "Advanced: I have deep expertise" },
+    { label: "Expert: Recognized subject matter expert" },
+  ];
+
+  const fScripting = f({
+    label: 'How would you rate your level of experience with writing scripts to automate tasks?*',
+    type: 'radio',
+    tag: 'input',
+    radioLabels: ratingOpts,
+  });
+  const rScripting = M.classify(fScripting, ashbySnap, {});
+  assert.equal(rScripting.action, 'fill');
+  assert.equal(rScripting.value, 'Advanced');
+  assert.equal(rScripting.review, 'rating');
+
+  const fVendor = f({
+    label: 'How would you rate your level of experience with vendor management?*',
+    type: 'radio',
+    tag: 'input',
+    radioLabels: ratingOpts,
+  });
+  const rVendor = M.classify(fVendor, ashbySnap, {});
+  assert.equal(rVendor.action, 'fill');
+  assert.equal(rVendor.value, 'Advanced');
+
+  const fEndpoint = f({
+    label: 'How would you rate your level of experience with endpoint management/security tools?*',
+    type: 'radio',
+    tag: 'input',
+    radioLabels: ratingOpts,
+  });
+  const rEndpoint = M.classify(fEndpoint, ashbySnap, {});
+  assert.equal(rEndpoint.action, 'fill');
+  assert.equal(rEndpoint.value, 'Advanced');
+
+  const fAWS = f({
+    label: 'How would you rate your level of experience with AWS security?*',
+    type: 'radio',
+    tag: 'input',
+    radioLabels: ratingOpts,
+  });
+  const rAWS = M.classify(fAWS, ashbySnap, {});
+  assert.equal(rAWS.action, 'fill');
+  assert.ok(['Intermediate', 'Advanced'].includes(rAWS.value));
+});

@@ -232,7 +232,7 @@ def r_profile_resume_file(api: Api):
         return 200, {"__raw__": md.encode(), "__type__": "text/plain; charset=utf-8"}
     if fmt == "html":
         return 200, {"__raw__": resume_export.to_html(md, title).encode(), "__type__": "text/html; charset=utf-8"}
-    name = f"{store.slug(profile.get('name') or 'resume')}.docx"
+    name = f"{store.slug(profile.get('name') or 'resume')}-resume.docx"
     return 200, {"__raw__": resume_export.to_docx(md, title), "__type__": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "__name__": name}
 
 
@@ -505,9 +505,12 @@ def r_packet_file(api: Api, packet_id: str):
         return fail("packet not approved yet -- review it before the extension may use the documents", 423)
     kind = api.q("type", "resume")
     fmt = api.q("fmt", "docx").lower()
+    profile = store.load_profile()
+    cand_name = store.slug(profile.get("name") or "resume")
+    comp_name = store.slug(p.get("company") or "")
     if kind == "cover":
         text = p.get("cover_letter", {}).get("text", "")
-        cover_name = f"{store.slug(p.get('company') or 'application')}-cover-letter"
+        cover_name = f"{cand_name}-cover-letter-{comp_name}" if comp_name else f"{cand_name}-cover-letter"
         if fmt == "txt":
             return 200, {"__raw__": text.encode(), "__type__": "text/plain; charset=utf-8", "__name__": cover_name + ".txt"}
         if fmt == "docx":
@@ -515,13 +518,13 @@ def r_packet_file(api: Api, packet_id: str):
             return 200, {"__raw__": resume_export.to_docx(text, "Cover letter"), "__type__": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "__name__": cover_name + ".docx"}
         return 200, {"__raw__": resume_export.to_html(text, "Cover letter").encode(), "__type__": "text/html; charset=utf-8"}
     md = p.get("resume", {}).get("markdown", "")
-    title = f"{p.get('company') or ''} {p.get('title') or 'Resume'}".strip()
+    title = f"{profile.get('name') or ''} - {p.get('company') or ''} {p.get('title') or 'Resume'}".strip()
     if fmt == "txt":
         return 200, {"__raw__": md.encode(), "__type__": "text/plain; charset=utf-8"}
     if fmt == "html":
         toolbar = api.q("toolbar", "1") != "0"
         return 200, {"__raw__": resume_export.to_html(md, title or "Resume", toolbar).encode(), "__type__": "text/html; charset=utf-8"}
-    name = f"{store.slug(p.get('company') or 'resume')}-{store.slug(p.get('title') or 'application')}.docx"
+    name = f"{cand_name}-resume-{comp_name}.docx" if comp_name else f"{cand_name}-resume.docx"
     return 200, {"__raw__": resume_export.to_docx(md, title or "Resume"), "__type__": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "__name__": name}
 
 

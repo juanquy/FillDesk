@@ -790,6 +790,36 @@ class HumanInTheLoopTests(unittest.TestCase):
         self.has(self.content, "function setDismissed", "content.js must persist dismissal")
         self.has(self.content, "function dismissalKey", "content.js must scope dismissal key")
 
+    def test_tailored_document_names_use_candidate_name(self):
+        from server import packet as packet_mod
+        fake_profile = {
+            "name": "Jane Doe",
+            "email": "jane@example.com",
+            "authorized_us": True,
+            "master_resume_markdown": "# Jane Doe\nEngineer",
+        }
+        fake_packet = {
+            "id": "pkt_1",
+            "title": "Security Specialist",
+            "company": "Acme Corp",
+            "answers": [],
+            "resume": {"markdown": "# Jane Doe"},
+            "cover_letter": {"text": "Cover letter text"},
+        }
+        snap = packet_mod.build_autofill_snapshot(fake_packet, fake_profile, {"title": "Security Specialist", "company": "Acme Corp"})
+        doc_names = snap.get("doc_names", {})
+        self.assertTrue(doc_names.get("resume", "").startswith("jane-doe-resume"))
+        self.assertTrue(doc_names.get("cover_letter", "").startswith("jane-doe-cover-letter"))
+
+        direct_snap = packet_mod.build_profile_snapshot_from_profile(fake_profile, {"title": "Engineer", "company": "Acme Corp"})
+        self.assertTrue(direct_snap.get("doc_names", {}).get("resume", "").startswith("jane-doe-resume"))
+
+    def test_ashby_and_custom_segmented_controls_in_content_js(self):
+        self.has(self.content, "function fieldQuestionTitle", "content.js must extract question title from ancestors")
+        self.has(self.content, "function isGenericPlaceholder", "content.js must filter generic placeholders")
+        self.has(self.content, "ashby-application-form-input-yesno", "content.js must handle Ashby yes/no segmented buttons")
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
