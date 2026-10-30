@@ -1304,6 +1304,59 @@ class GeneratedProseIsScrubbed(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("sent", res)
 
+    def test_file_upload_prompt_is_not_a_question(self):
+        from server import sensitive
+        prompt = "Upload Resume DOC, DOCX, or PDF (Max file size 6MB)."
+        self.assertTrue(sensitive.is_file_upload_prompt(prompt))
+        self.assertFalse(sensitive.is_question_like(prompt))
+        self.assertTrue(sensitive.is_file_upload_prompt("Please attach your cover letter (PDF)"))
+        self.assertFalse(sensitive.is_question_like("Please attach your cover letter (PDF)"))
+
+    def test_autofill_prepare_and_fill_endpoint(self):
+        payload = {
+            "url": "https://recruiting.example.com/jobs/123",
+            "title": "Systems Administrator",
+            "company": "Ntiva Systems",
+            "location": "Remote",
+            "description": "Looking for a Systems Administrator with M365 and Intune experience. What is your experience with Azure AD?",
+            "questions": ["Upload Resume DOC, DOCX, or PDF (Max file size 6MB).", "What is your experience with Azure AD?"],
+        }
+        code, res = call("POST", "/api/autofill/prepare_and_fill", payload)
+        self.assertEqual(code, 200)
+        self.assertIn("snapshot", res)
+        self.assertIn("packet_id", res)
+        self.assertEqual(res["company"], "Ntiva Systems")
+        snap = res["snapshot"]
+        self.assertTrue(snap.get("approved"))
+        # Verify file upload prompt was filtered out of questions
+        q_texts = [a["question"] for a in snap.get("answers", [])]
+        self.assertNotIn("Upload Resume DOC, DOCX, or PDF (Max file size 6MB).", q_texts)
+
+    def test_profile_resume_file_and_fallback(self):
+        code, docx = call("GET", "/api/profile/resume/file?fmt=docx", raw=True)
+        self.assertEqual(code, 200)
+        self.assertTrue(docx.startswith(b"PK"), "must return valid docx binary")
+
+        # Test snapshot source=profile
+        code, snap = call("GET", "/api/autofill/snapshot?source=profile")
+        self.assertEqual(code, 200)
+        self.assertTrue(snap.get("approved"))
+        self.assertTrue(snap.get("is_profile_only"))
+        self.assertIn("identity", snap)
+
+    def test_autofill_event_marks_job_applied(self):
+        code, job = call("POST", "/api/jobs", {"title": "Test Applied Job", "company": "Applied Corp", "description": "Great job with many responsibilities."})
+        self.assertEqual(code, 200)
+        jid = job["id"]
+        self.assertEqual(job["status"], "saved")
+
+        call("POST", "/api/events", {"event": "autofill_run", "job_id": jid, "filled": 5, "unmatched": 0, "blocked": 1})
+        code, updated = call("GET", f"/api/jobs/{jid}")
+        self.assertEqual(code, 200)
+        self.assertEqual(updated["status"], "applied")
+        self.assertIn("applied_at", updated)
+        call("DELETE", f"/api/jobs/{jid}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

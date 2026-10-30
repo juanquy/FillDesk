@@ -81,10 +81,21 @@ def review_reason(text: str) -> dict | None:
     return None
 
 
+_FILE_UPLOAD_PATTERN = re.compile(
+    r"\b(upload|attach)\b.*\b(resume|cv|curriculum vitae|cover letter|document|file|pdf|docx?|portfolio|transcript)\b"
+    r"|\b(max file size|allowed file types|accepted formats)\b",
+    re.I,
+)
+
+def is_file_upload_prompt(text: str) -> bool:
+    """True if text is an instruction for a file-attachment input, not an essay/text question."""
+    t = normalize(text)
+    return bool(_FILE_UPLOAD_PATTERN.search(t))
+
 _QUESTION_START = re.compile(
-    r"^(what|how|why|when|where|who|which|whether|describe|explain|provide|tell|list|outline|give|share|state|indicate|identify|confirm|select|choose|rate|rank|upload|attach|"
+    r"^(what|how|why|when|where|who|which|whether|describe|explain|provide|tell|list|outline|give|share|state|indicate|identify|confirm|select|choose|rate|rank|"
     r"are you|do you|have you|had you|can you|could you|would you|will you|is your|was your|your (ability|salary|notice|start)|"
-    r"please (describe|explain|share|list|state|indicate|identify|confirm|provide|tell|upload|attach)|"
+    r"please (describe|explain|share|list|state|indicate|identify|confirm|provide|tell)|"
     r"self[- ]identif\w*|optional|best answer to this|a few words|if hired|in your own words)",
     re.I,
 )
@@ -98,6 +109,8 @@ def is_question_like(text: str) -> bool:
     """
     t = normalize(text)
     if not t:
+        return False
+    if is_file_upload_prompt(t):
         return False
     if re.match(r"^([-*\u2022]|\d+[.)])\s", t):
         return False

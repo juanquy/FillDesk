@@ -411,13 +411,14 @@ async function loadJobs() {
   for (const j of jobs) {
     const el = document.createElement('div');
     el.className = 'item';
-    const statusBadge = { saved: 'blue', packet: 'warn', autofilled: 'warn', submitted: 'ok' }[j.status] || '';
+    const statusBadge = { saved: 'blue', prepared: 'blue', packet: 'warn', autofilled: 'warn', applied: 'ok', submitted: 'ok' }[j.status] || '';
     el.innerHTML = `
       <h3>${esc(j.title || '(untitled)')} <span class="badge ${statusBadge}">${esc(j.status)}</span></h3>
       <div class="meta">
         <span>${esc(j.company || '—')}</span><span>${esc(j.location || '')}</span>
         <span>${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(j.url).hostname)}</a>` : esc(j.source || '')}</span>
-        <span>${(j.description_preview || '').length} chars</span><span>${esc(j.created_at || '').slice(0, 10)}</span>
+        <span>${(j.description_preview || '').length} chars</span>
+        <span>${j.applied_at ? `Applied ${esc(j.applied_at.slice(0, 10))}` : esc(j.created_at || '').slice(0, 10)}</span>
       </div>
       <div class="muted" style="margin-bottom:8px">${esc(j.description_preview || '')}…</div>
       <div class="actions">

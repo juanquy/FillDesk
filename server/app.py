@@ -222,6 +222,20 @@ def r_profile_resume(api: Api):
     return ok({"ok": True, "method": "pasted", "saved": True})
 
 
+@route("GET", "/api/profile/resume/file")
+def r_profile_resume_file(api: Api):
+    profile = store.load_profile()
+    md = profile.get("master_resume_markdown") or ""
+    fmt = api.q("fmt", "docx")
+    title = f"{profile.get('name') or 'Resume'}".strip()
+    if fmt == "txt":
+        return 200, {"__raw__": md.encode(), "__type__": "text/plain; charset=utf-8"}
+    if fmt == "html":
+        return 200, {"__raw__": resume_export.to_html(md, title).encode(), "__type__": "text/html; charset=utf-8"}
+    name = f"{store.slug(profile.get('name') or 'resume')}.docx"
+    return 200, {"__raw__": resume_export.to_docx(md, title), "__type__": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "__name__": name}
+
+
 @route("POST", "/api/parse")
 def r_parse(api: Api):
     """Preview extraction without saving: {filename, base64} or {text}."""
@@ -515,10 +529,25 @@ def r_packet_file(api: Api, packet_id: str):
 
 @route("GET", "/api/autofill/snapshot")
 def r_autofill_snapshot(api: Api):
-    """What the extension is allowed to type. Approved packets only."""
+    """What the extension is allowed to type. Approved packets or master profile fallback."""
     packet_id = api.q("packet_id")
+    if api.q("source") == "profile" or packet_id == "profile":
+        profile = store.load_profile()
+        snap = packet_mod.build_profile_snapshot_from_profile(profile, {"title": "Application", "company": api.q("host", "")})
+        snap["approved"] = True
+        snap["is_profile_only"] = True
+        snap["ats_hint"] = api.q("host", "")
+        return ok(snap)
+
     p = store.get_packet(packet_id) if packet_id else store.latest_approved_packet()
     if not p:
+        if api.q("fallback") == "profile" or api.q("allow_profile") == "1":
+            profile = store.load_profile()
+            snap = packet_mod.build_profile_snapshot_from_profile(profile, {"title": "Application", "company": api.q("host", "")})
+            snap["approved"] = True
+            snap["is_profile_only"] = True
+            snap["ats_hint"] = api.q("host", "")
+            return ok(snap)
         return fail("no approved packet yet -- build and approve one in the dashboard", 404)
     if not p.get("approved"):
         return fail(f"packet {p['id']} is not approved", 423)
@@ -534,6 +563,70 @@ def r_autofill_snapshot(api: Api):
     snap["approved"] = True
     snap["ats_hint"] = api.q("host", "")
     return ok(snap)
+
+
+@route("POST", "/api/autofill/prepare_and_fill")
+def r_autofill_prepare_and_fill(api: Api):
+    """1-click on-page automation: scrape, save job, tailor packet, approve, and return snapshot."""
+    body = api.json() or {}
+    url = str(body.get("url") or "").strip()
+    title = str(body.get("title") or "").strip() or "Job Application"
+    company = str(body.get("company") or "").strip()
+    description = str(body.get("description") or "").strip()
+    questions = body.get("questions") or []
+
+    # 1. Save or find job
+    job_id = None
+    for j in store.list_jobs():
+        if url and j.get("url") == url:
+            job_id = j["id"]
+            break
+        if company and j.get("company") == company and j.get("title") == title:
+            job_id = j["id"]
+            break
+
+    filtered_questions = [q for q in questions if not sensitive.is_file_upload_prompt(str(q))]
+    if not job_id:
+        job = store.save_job({
+            "url": url,
+            "title": title,
+            "company": company,
+            "location": str(body.get("location") or ""),
+            "salary": str(body.get("salary") or ""),
+            "employment_type": str(body.get("employment_type") or ""),
+            "posted": str(body.get("posted") or ""),
+            "description": description[:20000],
+            "questions": filtered_questions,
+            "status": "prepared",
+        })
+        job_id = job["id"]
+    else:
+        job = store.get_job(job_id)
+
+    # 2. Build packet (tailor resume, cover letter, drafted answers)
+    packet = packet_mod.build_packet(job_id)
+    packet_id = packet["id"]
+
+    # 3. Approve packet for this run
+    packet["status"] = "approved"
+    packet["approved"] = True
+    packet["approved_at"] = store.now()
+    store.save_packet(packet)
+    refreshed = packet_mod.refresh_snapshot(packet_id) or packet
+
+    snap = dict(refreshed.get("profile_snapshot") or {})
+    snap["approved"] = True
+    snap["ats_hint"] = api.q("host", "")
+
+    store.log_event("packet_approved", {"packet_id": packet_id, "job_id": job_id, "method": "one-click"})
+
+    return ok({
+        "snapshot": snap,
+        "packet_id": packet_id,
+        "job_id": job_id,
+        "title": job.get("title"),
+        "company": job.get("company"),
+    })
 
 
 @route("GET", "/api/autofill/latest")
@@ -572,6 +665,19 @@ def r_notify(api: Api):
 def r_event(api: Api):
     payload = api.json() or {}
     store.log_event(str(payload.get("event", "event"))[:40], {k: v for k, v in payload.items() if k != "event"})
+    if payload.get("event") == "autofill_run":
+        job_id = payload.get("job_id")
+        packet_id = payload.get("packet_id")
+        if packet_id and not job_id:
+            pkt = store.get_packet(packet_id)
+            if pkt:
+                job_id = pkt.get("job_id")
+        if job_id:
+            job = store.get_job(job_id)
+            if job:
+                job["status"] = "applied"
+                job["applied_at"] = store.now()
+                store.save_job(job)
     return ok({"logged": True})
 
 

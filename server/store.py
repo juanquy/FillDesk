@@ -344,7 +344,8 @@ def save_job(job: dict) -> dict:
         "questions": job.get("questions", []),
         "tags": job.get("tags", []),
         "notes": job.get("notes", ""),
-        "status": job.get("status", "saved"),  # saved|packet|autofilled|submitted|rejected
+        "status": job.get("status", "saved"),  # saved|packet|autofilled|submitted|rejected|applied
+        "applied_at": job.get("applied_at") or None,
         # A cover-letter draft is not a packet: nothing here is ever autofilled.
         "draft_cover": job.get("draft_cover") or None,
     }

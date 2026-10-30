@@ -170,6 +170,8 @@ def extract_questions(job: dict, extra: list[str] | None = None) -> list[str]:
         q = sensitive.normalize(candidate)
         if len(q) < 8 or len(q) > 420:
             return
+        if sensitive.is_file_upload_prompt(q):
+            return
         if not sensitive.is_question_like(q):
             return
         if any(difflib.SequenceMatcher(None, q.lower(), f.lower()).ratio() > 0.86 for f in found):
@@ -954,3 +956,27 @@ def refresh_snapshot(packet_id: str) -> dict | None:
     job = store.get_job(packet.get("job_id") or "") or {}
     packet["profile_snapshot"] = build_autofill_snapshot(packet, store.load_profile(), job)
     return store.save_packet(packet)
+
+
+def build_profile_snapshot_from_profile(profile: dict, job: dict | None = None) -> dict:
+    """Build a baseline snapshot directly from the Master Profile without requiring an AI packet."""
+    if job is None:
+        job = {"title": "Application", "company": ""}
+    synthetic_packet = {
+        "id": "profile_direct",
+        "answers": [],
+        "resume": {"markdown": profile.get("master_resume_markdown", "")},
+        "cover_letter": {"text": ""},
+    }
+    snap = build_autofill_snapshot(synthetic_packet, profile, job)
+    snap["docs"] = {
+        "resume_docx": "/api/profile/resume/file?fmt=docx",
+        "resume_html": "/api/profile/resume/file?fmt=html",
+        "cover_letter_docx": "",
+        "cover_letter_txt": "",
+    }
+    snap["doc_names"] = {
+        "resume": f"{store.slug(profile.get('name') or 'resume')}.docx",
+        "cover_letter": "",
+    }
+    return snap

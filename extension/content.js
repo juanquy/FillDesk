@@ -362,11 +362,11 @@
     if (state.settings.highlight_filled === false) return;
     el.style.outline = '';
     el.style.outlineOffset = '';
-    const colors = { filled: '#2fbf7a', review: '#e6a23c', blocked: '#ef5f5f', planned: '#5b8cff' };
+    const colors = { filled: '#2fbf7a', review: '#e6a23c', blocked: '#ef5f5f', manual: '#ef5f5f', planned: '#5b8cff' };
     el.style.outline = `2px solid ${colors[cls] || colors.planned}`;
     el.style.outlineOffset = '1px';
     el.dataset.filldesk = cls;
-    setTimeout(() => { el.style.outline = ''; delete el.dataset.filldesk; }, cls === 'planned' ? 2500 : 60000);
+    setTimeout(() => { el.style.outline = ''; delete el.dataset.filldesk; }, cls === 'planned' ? 2500 : 90000);
   }
 
   async function fillText(desc, value) {
@@ -456,6 +456,7 @@
       counts[item.decision.action] = (counts[item.decision.action] || 0) + 1;
       if (item.decision.action === 'fill' || item.decision.action === 'upload') mark(item.desc.el, item.decision.review ? 'review' : 'planned');
       if (item.decision.action === 'block') mark(item.desc.el, 'blocked');
+      if (item.decision.action === 'skip') mark(item.desc.el, 'manual');
     }
     const unverified = flagUnverified(scanResult);
     counts.unverified = unverified;
@@ -535,6 +536,8 @@
           ui.line({ kind: 'warn', text: `${clipLabel(desc)} — left for you (answer unverified)` });
         } else {
           results.unmatched++;
+          mark(desc.el, 'manual');
+          ui.line({ kind: 'bad', text: `${clipLabel(desc)} — not in profile / left for manual entry` });
         }
         continue;
       }
@@ -608,6 +611,7 @@
       event: 'autofill_run', host: location.hostname, filled: results.filled, uploaded: results.uploaded,
       unmatched: results.unmatched, blocked: results.blocked, review: results.review,
       packet_id: state.snapshot && state.snapshot.packet_id,
+      job_id: (state.snapshot && state.snapshot.job_id) || storageGet('filldesk_last_job'),
     } });
     send({
       type: 'api',
@@ -798,13 +802,21 @@
     return clean(div.textContent).length > 200 ? clean(div.textContent) : clean(div.innerText || '');
   }
 
+  function isFileUploadPrompt(text) {
+    return /\b(upload|attach)\b.*\b(resume|cv|curriculum vitae|cover letter|document|file|pdf|docx?|portfolio|transcript)\b/i.test(text)
+      || /\b(max file size|allowed file types|accepted formats)\b/i.test(text);
+  }
+
   function extractQuestionsFromForm() {
     const found = [];
     const push = (t) => {
       const s = clean(t);
-      if (s.length > 7 && (/[?]$/.test(s) || /\b(experience with|why|describe|explain|how|what| tell|availability|expectation)\b/i.test(s)) && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
+      if (s.length > 7 && !isFileUploadPrompt(s) && (/[?]$/.test(s) || /\b(experience with|why|describe|explain|how|what| tell|availability|expectation)\b/i.test(s)) && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
     };
-    document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question').forEach((el) => push(textOf(el)));
+    document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question').forEach((el) => {
+      if (el.closest('input[type=file]') || el.querySelector('input[type=file]')) return;
+      push(textOf(el));
+    });
     document.querySelectorAll('textarea, select').forEach((el) => { const l = labelText(el); push(l.label || l.legend || l.section); });
     return found.slice(0, 40);
   }
@@ -866,6 +878,74 @@
     return clean(document.body.innerText).slice(0, 20000);
   }
 
+  let currentManualIndex = -1;
+  function jumpToNextManualField() {
+    const fields = Array.from(document.querySelectorAll('[data-filldesk="manual"], [data-filldesk="blocked"], [data-filldesk="review"]'))
+      .filter((el) => el.offsetParent !== null || el.getClientRects().length > 0);
+    if (!fields.length) {
+      ui.line({ kind: 'ok', text: 'no manual fields remaining on this page' });
+      return false;
+    }
+    currentManualIndex = (currentManualIndex + 1) % fields.length;
+    const target = fields[currentManualIndex];
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    try { target.focus({ preventScroll: true }); } catch (e) {}
+    const origOutline = target.style.outline;
+    target.style.outline = '3px solid #ff2222';
+    setTimeout(() => { target.style.outline = origOutline; }, 700);
+    return true;
+  }
+
+  async function prepareAndFill() {
+    if (state.running) return;
+    ui.setHeader('analyzing job…', true);
+    ui.line({ kind: 'ok', text: '1/3 analyzing job description on this page…' });
+
+    const jp = jsonLdJobs()[0] || {};
+    const host = location.hostname;
+    const title = clean(jp.title || meta(['og:title', 'twitter:title']) || textOf(document.querySelector('h1')) || document.title || 'Job Application');
+    const company = clean((jp.hiringOrganization && (jp.hiringOrganization.name || jp.hiringOrganization['@id'])) || meta(['og:site_name']) || subdomainCompany(host) || '');
+    let description = '';
+    if (jp.description) description = stripHtml(jp.description);
+    if (description.length < 200) description = mainText();
+
+    const payload = {
+      url: location.href,
+      title,
+      company,
+      location: jp.jobLocation ? clean(typeof jp.jobLocation === 'string' ? jp.jobLocation : [jp.jobLocation].flat().map((l) => (l && l.address ? [l.address.addressLocality, l.address.addressRegion, l.address.addressCountry].filter(Boolean).join(', ') : '')).join('; ')) : '',
+      description: description.slice(0, 20000),
+      questions: extractQuestionsFromForm(),
+    };
+
+    try {
+      ui.setHeader('tailoring with AI…', true);
+      ui.line({ kind: 'ok', text: `2/3 AI tailoring resume & answers for “${clip(title, 36)}”…` });
+      const res = await api('/api/autofill/prepare_and_fill', { method: 'POST', body: payload });
+      state.snapshot = res.snapshot;
+      storageSet('filldesk_last_job', res.job_id);
+      ui.setHeader(`${res.company || ''} · ${res.title || ''}`.replace(/^ · /, ''), true);
+      ui.line({ kind: 'ok', text: '3/3 tailored packet ready — filling application…' });
+      await run();
+    } catch (e) {
+      ui.line({ kind: 'warn', text: `AI tailoring error (${e.message}) — using Master Profile…` });
+      await quickFillProfile();
+    }
+  }
+
+  async function quickFillProfile() {
+    if (state.running) return;
+    ui.setHeader('loading profile…', true);
+    try {
+      state.snapshot = await api('/api/autofill/snapshot?source=profile&host=' + encodeURIComponent(location.hostname));
+      ui.setHeader(`${state.snapshot.identity.full_name || 'Profile'} · Master`, true);
+      ui.line({ kind: 'ok', text: 'filling directly from your Master Profile…' });
+      await run();
+    } catch (e) {
+      ui.line({ kind: 'bad', text: 'could not load profile: ' + e.message });
+    }
+  }
+
   async function buildPacketForSavedJob(jobId) {
     ui.line({ kind: 'ok', text: 'writing your packet…' });
     try {
@@ -884,6 +964,11 @@
       ui.setHeader(`${state.snapshot.job.company || ''} · ${state.snapshot.job.title || ''}`.replace(/^ · /, ''), true);
       return state.snapshot;
     } catch (e) {
+      try {
+        state.snapshot = await api('/api/autofill/snapshot?source=profile&host=' + encodeURIComponent(location.hostname));
+        ui.setHeader(`${state.snapshot.identity.full_name || 'Profile'} · Master`, true);
+        return state.snapshot;
+      } catch (_) {}
       ui.setHeader('no approved packet', false);
       ui.line({ kind: 'warn', text: e.message });
       return null;
@@ -971,11 +1056,12 @@
         <div class="body">
           <div class="bar"><i id="fd-prog"></i></div>
           <div class="btns">
-            <button class="btn pri" id="fd-fill">Fill application</button>
+            <button class="btn pri" id="fd-fill" title="1-click: tailor with AI & autofill">Tailor &amp; Fill</button>
+            <button class="btn" id="fd-quick" title="1-click: fast autofill from profile">Profile Fill</button>
             <button class="btn" id="fd-scan">Preview</button>
             <button class="btn" id="fd-save">Save job</button>
             <button class="btn" id="fd-next">Next page</button>
-            <button class="btn" id="fd-packet">Build packet</button>
+            <button class="btn" id="fd-packet">View packet</button>
             <button class="btn" id="fd-cover">Cover letter</button>
             <button class="btn off" id="fd-review" title="ask before each field">Ask per field</button>
             <button class="btn" id="fd-settings">Settings</button>
@@ -983,7 +1069,7 @@
           <div class="legend">
             <span><i style="background:#2fbf7a"></i>filled</span>
             <span><i style="background:#e6a23c"></i>verify</span>
-            <span><i style="background:#ef5f5f"></i>you must answer</span>
+            <span><i style="background:#ef5f5f"></i>manual (you answer)</span>
           </div>
           <div class="rev" id="fd-rev" style="display:none">
             <div class="revq" id="fd-revq">field 1 of 1</div>
@@ -1137,7 +1223,11 @@
         storageSet('filldesk_collapsed', box.classList.contains('hide') ? '1' : '0');
         setTimeout(clampPosition, 40);
       };
-      $('fd-fill').onclick = () => run();
+      $('fd-fill').onclick = () => {
+        if (state.snapshot) run();
+        else prepareAndFill();
+      };
+      $('fd-quick').onclick = () => quickFillProfile();
       $('fd-scan').onclick = () => preview();
       $('fd-save').onclick = () => saveJob();
       $('fd-next').onclick = () => stepNext();
@@ -1150,7 +1240,7 @@
       $('fd-rs').onclick = () => ui.answerReview('stop');
       $('fd-packet').onclick = async () => {
         const last = storageGet('filldesk_last_job');
-        if (!last) return line({ kind: 'warn', text: 'save the job first' });
+        if (!last) return line({ kind: 'warn', text: 'save or tailor a job first' });
         buildPacketForSavedJob(last);
       };
     }
@@ -1200,10 +1290,10 @@
       setRunning(on) {
         running = on;
         const btn = root.querySelector('#fd-fill');
-        btn.textContent = on ? 'Filling… (click to stop)' : 'Fill application';
+        btn.textContent = on ? 'Filling… (click to stop)' : (state.snapshot ? 'Fill application' : 'Tailor & Fill');
         btn.classList.toggle('stop', on);
         if (on) btn.onclick = () => stop();
-        else btn.onclick = () => run();
+        else btn.onclick = () => { if (state.snapshot) run(); else prepareAndFill(); };
       },
       summary(r, navAllowed, undoable, stopped) {
         const sum = root.querySelector('#fd-sum');
@@ -1211,11 +1301,22 @@
         const head = stopped
           ? `<b>Stopped after ${stopped.reached} of ${stopped.total} fields</b> — the rest were never touched, so nothing below is a verdict on them.<br>`
           : '';
-        sum.innerHTML = `${head}<b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance)${r.unverified ? ` · <b>${r.unverified}</b> left for you (answer unverified)` : ''} · <b>${r.unmatched}</b> unrecognised
-          <div class="hint">Nothing was submitted${r.review ? `, and <b>${r.review}</b> answer(s) were flagged <span style="color:#f0c48a">verify</span>` : ''}. Read the whole form — including collapsed sections — then submit it yourself${navAllowed ? '' : ' (navigation clicks are off)'}.</div>
+        const manualTotal = (r.blocked || 0) + (r.unmatched || 0);
+        sum.innerHTML = `${head}
+          <div style="display:flex;gap:10px;margin-bottom:8px;font-size:13.5px;flex-wrap:wrap">
+            <span style="color:#2fbf7a;font-weight:700">● ${r.filled} filled</span>
+            ${r.review ? `<span style="color:#e6a23c;font-weight:700">● ${r.review} verify</span>` : ''}
+            <span style="color:#ef5f5f;font-weight:700">● ${manualTotal} manual (red)</span>
+            ${r.uploaded ? `<span>· <b>${r.uploaded}</b> attached</span>` : ''}
+          </div>
+          <div><b>${r.filled}</b> filled · <b>${r.uploaded}</b> documents attached · <b>${r.blocked}</b> left for you (compliance)${r.unverified ? ` · <b>${r.unverified}</b> left for you (answer unverified)` : ''} · <b>${r.unmatched}</b> unrecognised</div>
+          ${manualTotal > 0 ? `<div style="margin:8px 0"><button class="btn pri" id="fd-jump-manual" style="width:100%;padding:8px 10px;cursor:pointer">Jump to next manual field (red) ➔</button></div>` : ''}
+          <div class="hint">Nothing was submitted${r.review ? `, and <b>${r.review}</b> answer(s) were flagged <span style="color:#f0c48a">verify</span>` : ''}. Fields in <span style="color:#ef5f5f;font-weight:600">red</span> need manual input. Read the whole form — including collapsed sections — then submit it yourself${navAllowed ? '' : ' (navigation clicks are off)'}.</div>
           <div class="hint"><b>You are responsible for everything you submit.</b> Check every answer against your actual situation before you press Submit.${undoable ? ' <button class="btn" id="fd-undo" style="margin-top:4px">Undo what FillDesk typed</button>' : ''}</div>`;
         const undo = sum.querySelector('#fd-undo');
         if (undo) undo.onclick = () => undoChanges();
+        const jumpBtn = sum.querySelector('#fd-jump-manual');
+        if (jumpBtn) jumpBtn.onclick = () => jumpToNextManualField();
       },
       review(item, index, total) {
         const box = root.querySelector('#fd-rev');
