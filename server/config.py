@@ -145,12 +145,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "visible_delay_ms": 260,       # pace so you can watch it happen
         "highlight_filled": True,
         "refuse_blocked_fields": True,
+        "autofill_work_auth": True,    # auto-fill citizenship & work authorization from profile
     },
     "packets": {
         "tailor_resume": True,
         "write_cover_letter": True,
         "draft_answers": True,
         "resume_pages": 1,
+    },
+    "alerts": {
+        # The desktop, not Chrome: the moment this matters is when the browser is the
+        # thing the user walked away from.
+        "desktop": True,
+        "cooldown_seconds": 60,        # ask-per-field waits at every field; 30 popups is worse than none
     },
 }
 

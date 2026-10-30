@@ -782,7 +782,7 @@ def _norm_key(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", (text or "").lower()).strip()
 
 
-SNAPSHOT_VERSION = 3  # bump when the rules for "may be typed" change; see r_autofill_snapshot
+SNAPSHOT_VERSION = 4  # bump when the rules for "may be typed" change; see r_autofill_snapshot
 
 def snapshot_fingerprint(packet: dict) -> str:
     """A digest of everything the extension is allowed to type.
@@ -885,6 +885,17 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
                 }
             )
     edu = [e for e in profile.get("education", []) if isinstance(e, dict) and (e.get("school") or e.get("degree"))]
+    wa_raw = str(profile.get("work_authorization_note") or "").strip()
+    wa_lower = wa_raw.lower()
+    is_citizen = bool(re.search(r"\b(u\.?s\.?\s*)?citizen\b", wa_lower))
+    is_pr = bool(re.search(r"\b(permanent resident|green card)\b", wa_lower))
+    needs_sponsor = bool(re.search(r"\b(require(s)?\s*sponsor|need(s)?\s*sponsor|visa|h-?1b)\b", wa_lower))
+    wa_info = {
+        "status": wa_raw,
+        "is_citizen": is_citizen,
+        "authorized": bool(wa_raw and (is_citizen or is_pr or not needs_sponsor or "authorized" in wa_lower)),
+        "requires_sponsorship": True if needs_sponsor else (False if (is_citizen or is_pr) else None),
+    }
     return {
         "version": SNAPSHOT_VERSION,
         "fingerprint": snapshot_fingerprint(packet),
@@ -913,11 +924,13 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
         "experience": exp,
         "education": edu,
         "answers": answers,
+        "work_authorization": wa_info,
         "review_only": {
             "salary_expectation": profile.get("salary_expectation", ""),
             "relocation": profile.get("relocation", ""),
             "start_date": profile.get("start_date", ""),
             "notice_period": profile.get("notice_period", ""),
+            "work_authorization": wa_raw,
         },
         "never_autofill": sorted(set(config.BLOCKED_CATEGORIES)),
         "docs": {

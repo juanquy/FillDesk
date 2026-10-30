@@ -24,7 +24,7 @@ import sys  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import app as app_mod  # noqa: E402
-from server import config, store
+from server import config, store, notify
 from server import packet as packet_mod  # noqa: E402
 
 PORT = 8791
@@ -1268,6 +1268,41 @@ class GeneratedProseIsScrubbed(unittest.TestCase):
         self.assertNotIn("authorized to work", json.dumps(snap.get("identity", {})).lower())
         call("DELETE", f"/api/packets/{packet['id']}")
         call("DELETE", f"/api/jobs/{jid}")
+
+    def test_desktop_notify_settings_and_clean(self):
+        # clean drops sensitive tokens
+        self.assertEqual(notify._clean("Reach me at test@example.com or 555-123-4567"), "Reach me at [email] or [phone]")
+        self.assertEqual(notify._clean("SSN 123-45-6789"), "SSN [ssn]")
+
+        # settings load and save alerts
+        code, s = call("GET", "/api/settings", origin="http://127.0.0.1:8791")
+        self.assertEqual(code, 200)
+        self.assertIn("alerts", s)
+        self.assertIn("status", s["alerts"])
+
+        # PUT updates settings without keeping status
+        code, updated = call("PUT", "/api/settings", {"alerts": {"desktop": False, "cooldown_seconds": 30, "status": {"bogus": True}}}, origin="http://127.0.0.1:8791")
+        self.assertEqual(code, 200)
+        self.assertFalse(updated["alerts"]["desktop"])
+        self.assertEqual(updated["alerts"]["cooldown_seconds"], 30)
+
+        # when disabled, notify returns reason
+        code, res = call("POST", "/api/notify", {"kind": "waiting", "field": "First name"})
+        self.assertEqual(code, 200)
+        self.assertFalse(res["sent"])
+        self.assertIn("off in Settings", res["reason"])
+
+        # restore settings
+        call("PUT", "/api/settings", {"alerts": {"desktop": True, "cooldown_seconds": 60}}, origin="http://127.0.0.1:8791")
+
+    def test_desktop_notify_endpoint_validation(self):
+        code, res = call("POST", "/api/notify", {"kind": "invalid"})
+        self.assertEqual(code, 400)
+
+        # kind: test always executes with force=True
+        code, res = call("POST", "/api/notify", {"kind": "test", "field": "Unit test"})
+        self.assertEqual(code, 200)
+        self.assertIn("sent", res)
 
 
 if __name__ == "__main__":

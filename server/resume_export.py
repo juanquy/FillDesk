@@ -293,7 +293,22 @@ def ats_report(resume_md: str, job_description: str, profile_text: str = "") -> 
 
 
 def needs_input_flags(text: str) -> list[str]:
-    return re.findall(r"\[[^\]]*(?:NEEDS INPUT|NEEDS REVIEW|TODO|VERIFY)[^\]]*\]", text or "", re.I)
+    flags = []
+    for line in (text or "").splitlines():
+        line = line.strip().lstrip("-*# ").strip()
+        if not line:
+            continue
+        for m in re.finditer(r"\[[^\]]*(?:NEEDS INPUT|NEEDS REVIEW|TODO|VERIFY)[^\]]*\]", line, re.I):
+            matched = m.group(0)
+            inner = matched.strip("[]").strip()
+            if inner.upper() in ("NEEDS INPUT", "NEEDS REVIEW", "TODO", "VERIFY"):
+                pre = line[:m.start()].strip()
+                words = re.findall(r"[\w.-]+", pre)
+                if words:
+                    flags.append(f"{words[-1]} {matched}")
+                    continue
+            flags.append(matched)
+    return flags
 
 
 def word_count(text: str) -> int:

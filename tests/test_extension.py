@@ -152,6 +152,16 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("chrome.tabs.", src, "chrome.tabs is not available in a content script")
         self.assertNotIn("chrome.notifications", src)
 
+    def test_content_script_handles_sandboxed_localstorage(self):
+        """Sandboxed iframes (e.g. LinkedIn or ATS iframes without allow-same-origin) throw
+        SecurityError on direct localStorage access. content.js must wrap storage calls."""
+        src = (EXT / "content.js").read_text()
+        self.assertIn("function storageGet", src)
+        self.assertIn("function storageSet", src)
+        for i, line in enumerate(src.splitlines(), start=1):
+            if ("localStorage.getItem" in line or "localStorage.setItem" in line) and "window.localStorage" not in line:
+                self.fail(f"Unguarded localStorage access on line {i}: {line.strip()}")
+
     def test_service_worker_has_no_dom(self):
         src = (EXT / "background.js").read_text()
         for token in ("document.", "window.", "localStorage"):
@@ -212,7 +222,7 @@ class DashboardTests(unittest.TestCase):
             self.assertTrue((WEB / src.lstrip("/")).is_file(), f"dashboard references missing {src}")
         js = (WEB / "app.js").read_text()
         for endpoint in set(re.findall(r"api\(['\"`]/([\w/<>\-.]+)", js)):
-            self.assertTrue(any(token in endpoint for token in ("status", "token", "settings", "llm", "profile", "jobs", "packets", "parse")), endpoint)
+            self.assertTrue(any(token in endpoint for token in ("status", "token", "settings", "llm", "profile", "jobs", "packets", "parse", "notify")), endpoint)
 
     def test_id_bindings_line_up(self):
         html = (WEB / "index.html").read_text()
@@ -732,6 +742,46 @@ class HumanInTheLoopTests(unittest.TestCase):
         self.has(self.content, "#job=", "panel should deep-link to a job draft")
         self.has(self.dash, "async function followHash", "dashboard ignores those links")
         self.has(self.dash, "addEventListener('hashchange'", "no hashchange handling")
+
+    def test_extension_panel_is_draggable_vertically(self):
+        self.has(self.content, "class=\"grip\"", "panel header must have a drag grip")
+        self.has(self.content, "cursor:grab", "panel header must show grab cursor")
+        self.has(self.content, "filldesk_panel_top", "panel must persist vertical position")
+        self.has(self.content, "function clampPosition", "panel must clamp position within viewport")
+        self.has(self.content, "pointerdown", "panel drag must listen for pointer events")
+
+    def test_autofill_work_auth_settings_and_snapshot(self):
+        self.has(self.index, 'id="s-workauth"', "settings page must have work authorization checkbox")
+        self.has(self.dash, "$('#s-workauth')", "app.js must bind s-workauth")
+        from server import packet, config
+        self.assertIn("autofill_work_auth", config.DEFAULT_SETTINGS["autofill"])
+        snap = packet.build_autofill_snapshot(
+            {"id": "test_pkt", "answers": []},
+            {"name": "Alex", "work_authorization_note": "Citizen"},
+            {"title": "Engineer", "company": "Acme"}
+        )
+        self.assertIn("work_authorization", snap)
+        self.assertTrue(snap["work_authorization"]["is_citizen"])
+        self.assertTrue(snap["work_authorization"]["authorized"])
+        self.assertFalse(snap["work_authorization"]["requires_sponsorship"])
+
+    def test_webmail_and_social_are_blocked(self):
+        self.has(self.content, "BLOCKED_HOST_PATTERNS", "content.js must define blocked host patterns")
+        self.has(self.content, "mail\\.google\\.com", "Gmail must be blocked from autofill auto-mount")
+        self.has(self.content, "outlook", "Outlook webmail must be blocked")
+
+    def test_linkedin_is_scoped_to_jobs_and_hiring(self):
+        self.has(self.content, "host === 'linkedin.com' || host.endsWith('.linkedin.com')",
+                 "LinkedIn must have custom domain-level scoping")
+        self.has(self.content, "/^\\/(jobs|talent|hiring)\\b/",
+                 "LinkedIn must only auto-mount on /jobs, /talent, /hiring")
+
+    def test_spa_navigation_monitoring(self):
+        self.has(self.content, "function checkNavigation", "content.js must monitor SPA navigation")
+        self.has(self.content, "function handleNavigation", "content.js must handle SPA navigation")
+        self.has(self.content, "attachShadow", "panel must use shadow DOM for CSS isolation")
+        bg = (EXT / "background.js").read_text()
+        self.has(bg, "chrome.tabs.onUpdated", "background.js must listen for tab URL updates")
 
 
 if __name__ == "__main__":

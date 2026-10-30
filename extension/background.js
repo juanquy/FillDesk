@@ -140,3 +140,9 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
     });
   }
 });
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) {
+    chrome.tabs.sendMessage(tabId, { type: 'url_changed', url: changeInfo.url }).catch(() => {});
+  }
+});

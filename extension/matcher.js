@@ -378,6 +378,106 @@
 
   function digits(phone) { return String(phone || '').replace(/[^\d+]/g, ''); }
 
+  function getWorkAuthInfo(snap) {
+    if (!snap) return null;
+    if (snap.work_authorization && typeof snap.work_authorization === 'object') {
+      const wa = snap.work_authorization;
+      if (wa.status || wa.is_citizen || wa.authorized != null) {
+        return {
+          status: wa.status || '',
+          is_citizen: !!wa.is_citizen,
+          authorized: wa.authorized !== false,
+          requires_sponsorship: wa.requires_sponsorship,
+        };
+      }
+    }
+    const raw = String((snap.review_only && snap.review_only.work_authorization) || snap.work_authorization_note || snap.work_authorization || '').trim();
+    if (!raw) return null;
+    const l = raw.toLowerCase();
+    const isCitizen = /\b(u\.?s\.?\s*)?citizen\b/i.test(l);
+    const isPR = /\b(permanent resident|green card)\b/i.test(l);
+    const needsSponsor = /\b(require(s)?\s*sponsor|need(s)?\s*sponsor|visa|h-?1b)\b/i.test(l);
+    return {
+      status: raw,
+      is_citizen: isCitizen,
+      authorized: isCitizen || isPR || !needsSponsor || l.includes('authorized'),
+      requires_sponsorship: needsSponsor ? true : ((isCitizen || isPR) ? false : null),
+    };
+  }
+
+  function classifyWorkAuth(field, n, snap) {
+    const info = getWorkAuthInfo(snap);
+    if (!info) return null;
+
+    const optLabels = (field.options || []).map((o) => normalizeOption(o.label));
+    const hasYes = optLabels.some((l) => /^(yes|y|true)\b/.test(l));
+    const hasCitizenOpt = optLabels.some((l) => /\bcitizen\b/.test(l));
+
+    // 1. Foreign or dual citizenship: "citizenship elsewhere", "foreign citizenship", "dual citizenship", "other citizenship"
+    if (/\b(citizenship elsewhere|foreign citizenship|dual citizenship|other citizenship|citizenship in another country)\b/i.test(n)) {
+      return {
+        action: 'fill',
+        key: 'work_authorization.foreign_citizenship',
+        value: 'No',
+        confidence: 0.95,
+        category: 'work_authorization',
+        review: 'work_authorization',
+        method: 'work_authorization',
+      };
+    }
+
+    // 2. Are you a citizen? / Citizenship status
+    if (/\b(are you (a )?(u\.?\s*s\.?|united states)?\s*citizen|u\.?\s*s\.?\s*citizen(ship)?|citizenship\s*(status)?|citizen of the united states)\b/i.test(n) ||
+        (/(?:^|\b)citizenship(?:\s*(status|\?|:|$))/i.test(n) && !/\b(if not|unless|other than)\b/i.test(n))) {
+      let val = info.is_citizen ? 'Yes' : 'No';
+      if (info.is_citizen && field.tag === 'select' && hasCitizenOpt && !hasYes) {
+        const citizenOpt = (field.options || []).find((o) => /\b(u\.?\s*s\.?|united states)?\s*citizen\b/i.test(normalizeOption(o.label)));
+        val = citizenOpt ? citizenOpt.label : 'U.S. Citizen';
+      }
+      return {
+        action: 'fill',
+        key: 'work_authorization.citizenship',
+        value: val,
+        confidence: 0.95,
+        category: 'work_authorization',
+        review: 'work_authorization',
+        method: 'work_authorization',
+      };
+    }
+
+    // 3. Are you legally authorized to work in the United States?
+    if (/\b(legally authorized|authorized to work|work authoriz\w*|employment eligibility|eligible to work)\b/i.test(n)) {
+      if (info.authorized != null) {
+        return {
+          action: 'fill',
+          key: 'work_authorization.authorized',
+          value: info.authorized ? 'Yes' : 'No',
+          confidence: 0.95,
+          category: 'work_authorization',
+          review: 'work_authorization',
+          method: 'work_authorization',
+        };
+      }
+    }
+
+    // 4. Will you now or in the future require visa sponsorship?
+    if (/\b(require.*sponsor\w*|need.*sponsor\w*|visa sponsor\w*|sponsorship.*require\w*|sponsorship for (an )?employment visa)\b/i.test(n)) {
+      if (info.requires_sponsorship != null) {
+        return {
+          action: 'fill',
+          key: 'work_authorization.sponsorship',
+          value: info.requires_sponsorship ? 'Yes' : 'No',
+          confidence: 0.95,
+          category: 'work_authorization',
+          review: 'work_authorization',
+          method: 'work_authorization',
+        };
+      }
+    }
+
+    return null;
+  }
+
   // ------------------------------------------------------------------ decision
   function signal(field) {
     return [
@@ -409,6 +509,10 @@
     //    legal problem for the applicant, not a formatting problem.
     for (const b of BLOCKED) {
       if (b.rx.test(n)) {
+        if (b.category === 'work_authorization' && settings && settings.autofill_work_auth) {
+          const wa = classifyWorkAuth(field, n, snap);
+          if (wa) return wa;
+        }
         out.action = 'block';
         out.category = b.category;
         out.reason = b.category;
@@ -570,5 +674,6 @@
     norm, key, signal, classify, matchAnswer, matchOption, normalizeOption, booleanFor,
     formatDate, parseDate, datePrecision, dateHintFor, looksLikeDate, looksLikeQuestion, employmentContext,
     splitLocation, digits, isSubmitText, isNextText, intentOf, BLOCKED, REVIEW, RULES, INTENTS, overlap,
+    getWorkAuthInfo, classifyWorkAuth,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

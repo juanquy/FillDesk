@@ -75,13 +75,13 @@ async function refresh() {
     const frames = (page.results || []).filter(Boolean);
     const fields = frames.reduce((n, r) => n + (r.fields || 0), 0);
     const appLike = frames.some((r) => r.appLike);
-    $('#page').classList.toggle('hidden', !appLike && fields < 4);
-    $('#pageinfo').textContent = appLike || fields >= 4
+    $('#page').classList.remove('hidden');
+    $('#pageinfo').textContent = appLike || fields >= 2
       ? `${tab.url.replace(/^https?:\/\//, '').slice(0, 46)} · ${fields} input${fields === 1 ? '' : 's'} found across ${frames.length} frame${frames.length === 1 ? '' : 's'}`
-      : 'this does not look like an application form';
+      : 'not auto-detected as a job form — click Toggle panel below to open FillDesk';
   } else {
     $('#page').classList.add('hidden');
-    $('#pageinfo').textContent = 'open the job application in a tab first';
+    $('#pageinfo').textContent = 'open a job application in a tab first';
   }
 }
 
@@ -118,5 +118,7 @@ $('#fill').onclick = (e) => pageAction('run', e.target);
 $('#preview').onclick = (e) => pageAction('scan', e.target);
 $('#savejob').onclick = (e) => pageAction('save-job', e.target);
 $('#next').onclick = (e) => pageAction('next', e.target);
+const toggleBtn = $('#togglepanel');
+if (toggleBtn) toggleBtn.onclick = () => sendToPage({ type: 'toggle' });
 
 refresh();

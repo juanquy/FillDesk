@@ -325,3 +325,84 @@ test('overlap scoring is sane', () => {
   assert.ok(M.overlap('why linear', 'Why Linear?') > 0.3);
   assert.ok(M.overlap('unrelated topic here', 'Do you have a disability?') < 0.35);
 });
+
+test('citizenship and work authorization are autofilled when enabled in settings', () => {
+  const citizenSnap = {
+    ...SNAP,
+    work_authorization: {
+      status: 'Citizen',
+      is_citizen: true,
+      authorized: true,
+      requires_sponsorship: false,
+    },
+    review_only: { ...SNAP.review_only, work_authorization: 'Citizen' },
+  };
+  const settingsOn = { ...SETTINGS, autofill_work_auth: true };
+  const settingsOff = { ...SETTINGS, autofill_work_auth: false };
+
+  // 1. "Are you a U.S. citizen?"
+  const qCitizen = f({ label: 'Are you a U.S. citizen?' });
+  const rCitizenOn = M.classify(qCitizen, citizenSnap, settingsOn);
+  assert.equal(rCitizenOn.action, 'fill');
+  assert.equal(rCitizenOn.value, 'Yes');
+  assert.equal(rCitizenOn.review, 'work_authorization');
+
+  const rCitizenOff = M.classify(qCitizen, citizenSnap, settingsOff);
+  assert.equal(rCitizenOff.action, 'block');
+  assert.equal(rCitizenOff.category, 'work_authorization');
+
+  // 2. "Citizenship status" dropdown
+  const qCitizenSelect = f({
+    tag: 'select',
+    label: 'Citizenship status',
+    options: [{ label: 'Select...' }, { label: 'U.S. Citizen' }, { label: 'Permanent Resident' }],
+  });
+  const rCitizenSelect = M.classify(qCitizenSelect, citizenSnap, settingsOn);
+  assert.equal(rCitizenSelect.action, 'fill');
+  assert.equal(rCitizenSelect.value, 'U.S. Citizen');
+
+  // 3. "Are you legally authorized to work in the United States?"
+  const qAuth = f({ label: 'Are you legally authorized to work in the United States?' });
+  const rAuthOn = M.classify(qAuth, citizenSnap, settingsOn);
+  assert.equal(rAuthOn.action, 'fill');
+  assert.equal(rAuthOn.value, 'Yes');
+  assert.equal(rAuthOn.review, 'work_authorization');
+
+  // 4. "Will you now or in the future require visa sponsorship?"
+  const qSponsor = f({ label: 'Will you now or in the future require visa sponsorship?' });
+  const rSponsorOn = M.classify(qSponsor, citizenSnap, settingsOn);
+  assert.equal(rSponsorOn.action, 'fill');
+  assert.equal(rSponsorOn.value, 'No');
+  assert.equal(rSponsorOn.review, 'work_authorization');
+
+  // 5. "Do you hold citizenship elsewhere?"
+  const qForeign = f({ label: 'Do you hold citizenship elsewhere?' });
+  const rForeign = M.classify(qForeign, citizenSnap, settingsOn);
+  assert.equal(rForeign.action, 'fill');
+  assert.equal(rForeign.value, 'No');
+  assert.equal(rForeign.review, 'work_authorization');
+
+  // 6. Radio buttons inherit group questions
+  const radioCitizenYes = f({ type: 'radio', tag: 'input', label: 'Yes', name: 'citizen_radio', groupLabel: 'Are you a U.S. citizen?' });
+  const rRadioCitizen = M.classify(radioCitizenYes, citizenSnap, settingsOn);
+  assert.equal(rRadioCitizen.action, 'fill');
+  assert.equal(rRadioCitizen.value, 'Yes');
+
+  const radioSponsorNo = f({ type: 'radio', tag: 'input', label: 'No', name: 'sponsor_radio', groupLabel: 'Will you now or in the future require visa sponsorship?' });
+  const rRadioSponsor = M.classify(radioSponsorNo, citizenSnap, settingsOn);
+  assert.equal(rRadioSponsor.action, 'fill');
+  assert.equal(rRadioSponsor.value, 'No');
+
+  // 7. Protected classes remain strictly blocked even with autofill_work_auth: true
+  const qRace = f({ label: 'Please indicate your race or ethnicity' });
+  assert.equal(M.classify(qRace, citizenSnap, settingsOn).action, 'block');
+  assert.equal(M.classify(qRace, citizenSnap, settingsOn).category, 'protected_class');
+
+  const qDisability = f({ label: 'Do you have a disability?' });
+  assert.equal(M.classify(qDisability, citizenSnap, settingsOn).action, 'block');
+  assert.equal(M.classify(qDisability, citizenSnap, settingsOn).category, 'disability');
+
+  const qVeteran = f({ label: 'Are you a protected veteran?' });
+  assert.equal(M.classify(qVeteran, citizenSnap, settingsOn).action, 'block');
+  assert.equal(M.classify(qVeteran, citizenSnap, settingsOn).category, 'veteran');
+});

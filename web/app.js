@@ -33,10 +33,51 @@ function toast(msg, kind = '') {
 function modal(title, html) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = html;
+  const cancel = $('#modal-cancel');
+  const confirm = $('#modal-confirm');
+  const close = $('#modal-close');
+  if (cancel) cancel.classList.add('hidden');
+  if (confirm) confirm.classList.add('hidden');
+  if (close) close.classList.remove('hidden');
   $('#modal').classList.remove('hidden');
 }
+
+function confirmModal({ title, html, confirmText = 'Confirm', cancelText = 'Cancel', kind = 'primary' }) {
+  return new Promise((resolve) => {
+    $('#modal-title').textContent = title;
+    $('#modal-body').innerHTML = html;
+    const cancel = $('#modal-cancel');
+    const confirm = $('#modal-confirm');
+    const close = $('#modal-close');
+    if (close) close.classList.add('hidden');
+    if (cancel) {
+      cancel.classList.remove('hidden');
+      cancel.textContent = cancelText;
+    }
+    if (confirm) {
+      confirm.classList.remove('hidden');
+      confirm.className = kind;
+      confirm.textContent = confirmText;
+    }
+    const cleanup = (val) => {
+      $('#modal').classList.add('hidden');
+      if (cancel) cancel.onclick = null;
+      if (confirm) confirm.onclick = null;
+      resolve(val);
+    };
+    if (cancel) cancel.onclick = () => cleanup(false);
+    if (confirm) confirm.onclick = () => cleanup(true);
+    $('#modal').classList.remove('hidden');
+  });
+}
 $('#modal-close').onclick = () => $('#modal').classList.add('hidden');
-$('#modal').onclick = (e) => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); };
+$('#modal').onclick = (e) => {
+  if (e.target.id === 'modal') {
+    const cancel = $('#modal-cancel');
+    if (cancel && !cancel.classList.contains('hidden')) cancel.click();
+    else $('#modal').classList.add('hidden');
+  }
+};
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -394,7 +435,13 @@ async function loadJobs() {
         <pre style="white-space:pre-wrap;font-size:12.5px">${esc(full.description || '(no description captured)')}</pre>`);
     };
     el.querySelector('[data-act=del]').onclick = async () => {
-      if (!confirm('Delete this job?')) return;
+      const ok = await confirmModal({
+        title: 'Delete job?',
+        html: `<p>Delete job <b>${esc(j.title || 'untitled')} — ${esc(j.company || '')}</b>? A backup copy is preserved in data/backups.</p>`,
+        confirmText: 'Delete',
+        kind: 'bad',
+      });
+      if (!ok) return;
       await api('/api/jobs/' + j.id, { method: 'DELETE' }); loadJobs(); loadStatus();
     };
     host.appendChild(el);
@@ -512,7 +559,13 @@ async function loadPackets() {
       </div>`;
     el.querySelector('[data-act=open]').onclick = () => openPacket(p.id);
     el.querySelector('[data-act=del]').onclick = async () => {
-      if (!confirm('Delete this packet?')) return;
+      const ok = await confirmModal({
+        title: 'Delete packet?',
+        html: `<p>Delete application packet for <b>${esc(p.title || 'untitled')} — ${esc(p.company || '')}</b>?</p>`,
+        confirmText: 'Delete',
+        kind: 'bad',
+      });
+      if (!ok) return;
       await api('/api/packets/' + p.id, { method: 'DELETE' }); loadPackets(); loadStatus();
     };
     host.appendChild(el);
@@ -691,8 +744,27 @@ $('#pd-approve').onclick = async () => {
       toast('Approved. The extension can now autofill with exactly this text.', 'ok');
       loadPackets(); loadStatus();
     } else {
-      const list = [...(res.blocking || []).map((b) => b.question), ...(res.flags || [])].slice(0, 12).map(esc).join('<br>· ');
-      const go = confirm(`Still open:\n\n· ${list}\n\nApprove anyway?`);
+      const items = [
+        ...(res.blocking || []).map((b) => `<li style="margin:6px 0"><b>Question:</b> ${esc(b.question)}${b.note ? ` <span class="muted">(${esc(b.note)})</span>` : ''}</li>`),
+        ...(res.flags || []).map((f) => `<li style="margin:6px 0"><b>Document placeholder:</b> ${esc(f)}</li>`),
+      ].slice(0, 15);
+      const html = `
+        <div class="callout warn" style="margin-bottom:12px">
+          <h3>Unresolved items</h3>
+          <p style="margin:0 0 8px">The following items are still flagged as requiring input or review:</p>
+          <ul style="margin:0;padding-left:18px">${items.join('')}</ul>
+        </div>
+        <p class="muted" style="font-size:13px;margin:8px 0 0">
+          Approving with open items releases the packet for autofill, but unanswered questions won't be typed and document placeholders will remain unreplaced. Do you want to approve anyway?
+        </p>
+      `;
+      const go = await confirmModal({
+        title: 'Approve packet with open items?',
+        html,
+        confirmText: 'Approve anyway',
+        cancelText: 'Keep editing',
+        kind: 'primary',
+      });
       if (go) {
         const forced = await api(`/api/packets/${CURRENT.id}/approve`, { method: 'POST', json: { force: true } });
         CURRENT = forced.packet;
@@ -718,11 +790,25 @@ async function loadSettings() {
   $('#s-overwrite').checked = s.autofill.overwrite_filled;
   $('#s-nav').checked = s.autofill.click_navigation;
   $('#s-upload').checked = s.autofill.upload_documents;
+  const workAuthBox = $('#s-workauth');
+  if (workAuthBox) workAuthBox.checked = s.autofill.autofill_work_auth !== false;
   $('#s-delay').value = s.autofill.visible_delay_ms;
   $('#s-tailor').checked = s.packets.tailor_resume;
   $('#s-letter').checked = s.packets.write_cover_letter;
   $('#s-pages').value = s.packets.resume_pages;
   $('#s-token').value = t.token;
+
+  const alerts = s.alerts || {};
+  const alertBox = $('#s-alerts-desktop');
+  if (alertBox) alertBox.checked = alerts.desktop !== false;
+  const coolBox = $('#s-alerts-cooldown');
+  if (coolBox) coolBox.value = alerts.cooldown_seconds != null ? alerts.cooldown_seconds : 60;
+  const statusEl = $('#s-alerts-status');
+  if (statusEl && alerts.status) {
+    statusEl.textContent = alerts.status.possible
+      ? `Detected: ${alerts.status.backends.join(', ')}`
+      : 'No desktop notification backend detected';
+  }
 }
 
 $('#s-save').onclick = async () => {
@@ -735,9 +821,14 @@ $('#s-save').onclick = async () => {
     autofill: {
       overwrite_filled: $('#s-overwrite').checked, click_navigation: $('#s-nav').checked,
       upload_documents: $('#s-upload').checked, refuse_blocked_fields: true,
+      autofill_work_auth: $('#s-workauth') ? $('#s-workauth').checked : true,
       visible_delay_ms: parseInt($('#s-delay').value || '260', 10),
     },
     packets: { tailor_resume: $('#s-tailor').checked, write_cover_letter: $('#s-letter').checked, resume_pages: parseInt($('#s-pages').value || '1', 10) },
+    alerts: {
+      desktop: $('#s-alerts-desktop') ? $('#s-alerts-desktop').checked : true,
+      cooldown_seconds: parseInt(($('#s-alerts-cooldown') && $('#s-alerts-cooldown').value) || '60', 10),
+    },
   };
   if ($('#s-key').value.trim()) patch.llm.api_key = $('#s-key').value.trim();
   await api('/api/settings', { method: 'PUT', json: patch });
@@ -745,6 +836,26 @@ $('#s-save').onclick = async () => {
   $('#s-key').value = '';
   toast('Settings saved.', 'ok'); loadStatus();
 };
+
+const alertTestBtn = $('#s-alerts-test');
+if (alertTestBtn) {
+  alertTestBtn.onclick = async () => {
+    const was = alertTestBtn.textContent;
+    alertTestBtn.disabled = true; alertTestBtn.textContent = 'Sending…';
+    try {
+      const res = await api('/api/notify', { method: 'POST', json: { kind: 'test', field: 'FillDesk alert test' } });
+      if (res.sent) {
+        toast(`Desktop alert sent via ${res.via}. Check your screen.`, 'ok');
+      } else {
+        toast(`Alert not sent: ${res.reason || 'disabled or unavailable'}`, 'warn');
+      }
+    } catch (e) {
+      toast('Alert request failed: ' + e.message, 'err');
+    } finally {
+      alertTestBtn.disabled = false; alertTestBtn.textContent = was;
+    }
+  };
+}
 
 $('#s-test').onclick = async () => {
   $('#s-test-out').textContent = 'contacting model…';

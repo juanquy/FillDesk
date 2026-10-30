@@ -16,16 +16,44 @@
 
   const ATS_HOSTS = [
     'boards.greenhouse.io', 'job-boards.greenhouse.io', 'greenhouse.io',
-    'jobs.lever.co', 'lever.co', 'myworkdayjobs.com', 'wday.com', 'myworkday.com',
+    'jobs.lever.co', 'lever.co', 'myworkdayjobs.com', 'myworkdaysite.com', 'workday.com', 'wday.com',
     'smartrecruiters.com', 'jobs.smartrecruiters.com', 'recruitite.com', 'jobvite.com',
     'bamboohr.com', 'workable.com', 'apply.workable.com', 'personio.com', 'jobs.personio.com',
     'teamtailor.com', 'jobs.teamtailor.com', 'ashbyhq.com', 'jobs.ashbyhq.com',
     'icims.com', 'taleo.net', 'secure.netsuite.com', 'ezhire.com', 'jalbert.com',
     'cws-netprod.sterlingtech.net', 'faaalead.com', 'quantisnow.com', 'successfactors.com',
-    'sapsf.com', 'careerfive.com', 'ceipal.com', 'jobs.accenture.com', 'deloitte careers',
-    'linkedin.com/jobs', 'linkedin.com/talent', 'indeed.com/viewjob', 'indeed.com/rc',
-    'glassdoor.com/joblisting', 'ziprecruiter.com/jobs', 'wellfound.com', 'builtin.com',
-    'dice.com/jobs', 'jooble.org', 'workingnomads.com', 'remote.co', 'otta.tech',
+    'successfactors.eu', 'sapsf.com', 'ns2cloud.com', 'careerfive.com', 'ceipal.com', 'jobs.accenture.com',
+    'dice.com', 'jooble.org', 'workingnomads.com', 'remote.co', 'otta.tech',
+    'oraclecloud.com', 'csod.com', 'ultipro.com', 'dayforcehcm.com', 'applicantpro.com',
+    'paylocity.com', 'paycomonline.net', 'paycom.com', 'adp.com', 'breezy.hr', 'pinpointhq.com',
+    'recruitee.com', 'jazzhr.com', 'brassring.com', 'eightfold.ai', 'avature.net', 'phenompro.com',
+    'phenom.com', 'rippling.com', 'ziprecruiter.com', 'wellfound.com', 'builtin.com',
+    'joinhandshake.com', 'usajobs.gov'
+  ];
+
+  const BLOCKED_HOST_PATTERNS = [
+    /mail\.google\.com$/i,
+    /inbox\.google\.com$/i,
+    /outlook\.(live|office|office365)\.com$/i,
+    /mail\.yahoo\.com$/i,
+    /mail\.aol\.com$/i,
+    /proton\.me$/i,
+    /zoho\.com$/i,
+    /web\.whatsapp\.com$/i,
+    /web\.telegram\.org$/i,
+    /discord\.com$/i,
+    /slack\.com$/i,
+    /teams\.microsoft\.com$/i,
+    /youtube\.com$/i,
+    /netflix\.com$/i,
+    /twitter\.com$/i,
+    /x\.com$/i,
+    /facebook\.com$/i,
+    /instagram\.com$/i,
+    /reddit\.com$/i,
+    /tiktok\.com$/i,
+    /amazon\.com$/i,
+    /ebay\.com$/i,
   ];
 
   const state = {
@@ -42,6 +70,26 @@
     reviewAll: false,
     changes: [],
   };
+
+  const MEMORY_STORAGE = {};
+  function storageGet(key) {
+    try {
+      return (typeof window !== 'undefined' && window.localStorage) ? window.localStorage.getItem(key) : (MEMORY_STORAGE[key] || null);
+    } catch (e) {
+      // In sandboxed frames (e.g. LinkedIn or ATS iframes without allow-same-origin),
+      // accessing window.localStorage throws a SecurityError. Fall back silently.
+      return MEMORY_STORAGE[key] || null;
+    }
+  }
+
+  function storageSet(key, value) {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) window.localStorage.setItem(key, String(value));
+    } catch (e) {
+      // Ignore sandbox SecurityErrors and keep in-memory copy
+    }
+    MEMORY_STORAGE[key] = String(value);
+  }
 
   // ---------------------------------------------------------------- transport
   function send(msg) {
@@ -497,6 +545,14 @@
       if (state.reviewEach && !state.reviewAll) {
         desc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         ui.line({ kind: 'warn', text: `waiting on you: ${clipLabel(desc)} — press Y to fill, N to skip, A for the rest` });
+        send({
+          type: 'api',
+          server: state.server,
+          token: state.token,
+          path: '/api/notify',
+          method: 'POST',
+          body: { kind: 'waiting', field: clipLabel(desc) },
+        });
         state.reached = i;
         const choice = await ui.review(item, i, state.plan.length);
         if (choice === 'skip') { results.unmatched++; ui.line({ kind: 'warn', text: `skipped ${clipLabel(desc)} — yours to answer` }); continue; }
@@ -553,6 +609,14 @@
       unmatched: results.unmatched, blocked: results.blocked, review: results.review,
       packet_id: state.snapshot && state.snapshot.packet_id,
     } });
+    send({
+      type: 'api',
+      server: state.server,
+      token: state.token,
+      path: '/api/notify',
+      method: 'POST',
+      body: { kind: 'done', field: `${results.filled} filled · ${results.unmatched} left` },
+    });
   }
 
   function clearMarks() {
@@ -601,14 +665,14 @@
     state.reviewEach = !!on;
     state.reviewAll = false;
     ui.setReviewEach(state.reviewEach);
-    localStorage.setItem('filldesk_review_each', state.reviewEach ? '1' : '0');
+    storageSet('filldesk_review_each', state.reviewEach ? '1' : '0');
     ui.line({ kind: 'ok', text: state.reviewEach
       ? 'ask-per-field is ON: it will stop at each field — Y fills, N skips, A fills the rest, Esc stops'
       : 'ask-per-field is OFF: it fills the approved plan in one run' });
   }
 
   async function draftCover() {
-    const last = localStorage.getItem('filldesk_last_job');
+    const last = storageGet('filldesk_last_job');
     if (!last) return ui.line({ kind: 'warn', text: 'save the job first — Cover letter needs a saved posting' });
     ui.line({ kind: 'ok', text: 'drafting a cover letter for this posting…' });
     try {
@@ -838,55 +902,58 @@
 
     function css() {
       return `
-      .box{width:330px;background:#12161d;color:#e8ecf3;border:1px solid #2a3442;border-radius:12px;
-           box-shadow:0 12px 40px rgba(0,0,0,.45);font-size:12.5px;overflow:hidden}
-      .hd{display:flex;align-items:center;gap:8px;padding:9px 11px;background:#171d26;border-bottom:1px solid #2a3442}
-      .dot{width:8px;height:8px;border-radius:50%;background:#ef5f5f;flex:none}
+      .box{width:440px;min-width:380px;max-width:92vw;background:#12161d;color:#e8ecf3;border:1px solid #2a3442;border-radius:12px;
+           box-shadow:0 14px 44px rgba(0,0,0,.5);font-size:13.5px;overflow:hidden}
+      .hd{display:flex;align-items:center;gap:10px;padding:11px 14px;background:#171d26;border-bottom:1px solid #2a3442;cursor:grab;user-select:none;touch-action:none}
+      .hd.dragging{cursor:grabbing}
+      .grip{color:#5c6b82;font-size:13.5px;cursor:grab;letter-spacing:-1.5px;user-select:none;margin-right:2px;display:inline-flex;align-items:center}
+      .hd.dragging .grip{cursor:grabbing}
+      .dot{width:9px;height:9px;border-radius:50%;background:#ef5f5f;flex:none}
       .dot.on{background:#2fbf7a}
-      .ttl{font-weight:700;letter-spacing:.2px}
-      .ver{color:#63708a;font-size:10px;font-weight:600;margin-right:2px}
-      .sub{color:#93a0b5;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .mini{background:#202735;border:1px solid #2a3442;color:#cdd6e3;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer}
-      .btns{display:flex;flex-wrap:wrap;gap:6px;padding:10px 11px}
-      .btn{flex:1 1 auto;background:#252d3b;border:1px solid #33405200;color:#e8ecf3;border-radius:7px;padding:7px 9px;font-size:12px;cursor:pointer;font-weight:600}
+      .ttl{font-weight:700;font-size:15px;letter-spacing:.2px}
+      .ver{color:#63708a;font-size:11.5px;font-weight:600;margin-right:4px}
+      .sub{color:#93a0b5;font-size:12.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .mini{background:#202735;border:1px solid #2a3442;color:#cdd6e3;border-radius:6px;padding:4px 9px;font-size:13px;cursor:pointer}
+      .btns{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px}
+      .btn{flex:1 1 calc(25% - 8px);min-width:85px;background:#252d3b;border:1px solid #33405200;color:#e8ecf3;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;font-weight:600;text-align:center}
       .btn:hover{background:#2e3849}
       .btn.pri{background:#5b8cff;border-color:#5b8cff;color:#fff}
       .btn.stop{background:#ef5f5f;border-color:#ef5f5f;color:#fff}
       .bar{height:4px;background:#202735}
       .bar>i{display:block;height:100%;width:0;background:#5b8cff;transition:width .18s}
-      .legend{display:flex;gap:9px;padding:0 11px 8px;color:#93a0b5;font-size:10.5px}
-      .legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px}
-      .log{max-height:190px;overflow:auto;padding:0 11px 10px;font-size:11.5px;line-height:1.45}
-      .log div{padding:2px 0;border-bottom:1px solid #1c232e;white-space:pre-line}
+      .legend{display:flex;gap:12px;padding:0 14px 10px;color:#93a0b5;font-size:12px}
+      .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+      .log{max-height:240px;overflow:auto;padding:0 14px 12px;font-size:12.5px;line-height:1.55}
+      .log div{padding:4px 0;border-bottom:1px solid #1c232e;white-space:pre-line}
       .log .ok{color:#8fe0b6}.log .warn{color:#f0c48a}.log .bad{color:#f3a1a1}
-      .sum{padding:9px 11px;background:#171d26;border-top:1px solid #2a3442;color:#cdd6e3}
+      .sum{padding:11px 14px;background:#171d26;border-top:1px solid #2a3442;color:#cdd6e3;font-size:13px}
       .sum b{color:#fff}
-      .row{display:flex;gap:6px;padding:0 11px 10px}
-      .row input{flex:1;background:#0f141a;border:1px solid #2a3442;color:#e8ecf3;border-radius:6px;padding:6px;font-size:11.5px}
-      .hint{padding:0 11px 10px;color:#93a0b5;font-size:11px}
-      .rev{border-top:1px solid #2a3442;background:#141a24;padding:9px 11px}
+      .row{display:flex;gap:8px;padding:0 14px 12px}
+      .row input{flex:1;background:#0f141a;border:1px solid #2a3442;color:#e8ecf3;border-radius:7px;padding:8px 10px;font-size:13px}
+      .hint{padding:0 14px 12px;color:#93a0b5;font-size:12.5px}
+      .rev{border-top:1px solid #2a3442;background:#141a24;padding:12px 14px}
       /* A panel waiting on a decision has to look like it is waiting, or it reads as a
          hung tool: the reviewer's hand was already on the big button. */
       .rev.waiting{background:#182231;border-top-color:#5b8cff;box-shadow:inset 0 2px 0 #5b8cff}
       .rev.waiting .revq{color:#9db8ff}
       .rev.waiting #fd-ry{box-shadow:0 0 0 3px rgba(91,140,255,.35)}
-      .revq{color:#93a0b5;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px}
-      .revl{font-weight:700;margin:2px 0}
-      .revv{background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:6px;margin:5px 0 7px;
-            font-size:11.5px;max-height:66px;overflow:auto;color:#cdd6e3;white-space:pre-wrap}
-      .revd{display:flex;align-items:center;gap:7px;margin:0 0 7px}
-      .revd .btn{flex:none;padding:4px 8px;font-size:11px}
-      .hintx{color:#93a0b5;font-size:10.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .revb{display:flex;gap:6px;flex-wrap:wrap}
-      .revb .btn{flex:1 1 auto;padding:6px 8px;font-size:11.5px}
+      .revq{color:#93a0b5;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+      .revl{font-weight:700;font-size:14.5px;margin:3px 0}
+      .revv{background:#0f141a;border:1px solid #2a3442;border-radius:7px;padding:8px 10px;margin:6px 0 8px;
+            font-size:13px;max-height:85px;overflow:auto;color:#cdd6e3;white-space:pre-wrap}
+      .revd{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+      .revd .btn{flex:none;padding:5px 10px;font-size:12px}
+      .hintx{color:#93a0b5;font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .revb{display:flex;gap:8px;flex-wrap:wrap}
+      .revb .btn{flex:1 1 auto;padding:8px 12px;font-size:13px}
       /* Off has to read as "click me", not "cannot click me": a dimmed button in a
          dark panel looks disabled, and one reviewer already read it that way. */
       .btn.off{background:#1c232e;border:1px dashed #4a5a70;color:#c3cddd}
       .btn.off:hover{background:#2b3f5c;border-color:#5b8cff;color:#fff}
       .btn.on{background:#2b3f5c;border:1px solid #5b8cff;color:#fff}
-      .draft{border-top:1px solid #2a3442;padding:9px 11px}
-      .draft pre{margin:0 0 7px;max-height:150px;overflow:auto;white-space:pre-wrap;font:11.5px/1.5 ui-monospace,monospace;
-                 background:#0f141a;border:1px solid #2a3442;border-radius:6px;padding:7px}
+      .draft{border-top:1px solid #2a3442;padding:12px 14px}
+      .draft pre{margin:0 0 8px;max-height:180px;overflow:auto;white-space:pre-wrap;font:12.5px/1.55 ui-monospace,monospace;
+                 background:#0f141a;border:1px solid #2a3442;border-radius:7px;padding:9px}
       .hide .body{display:none}
       `;
     }
@@ -894,7 +961,8 @@
     root = document.createElement('div');
     root.innerHTML = `<style>${css()}</style>
       <div class="box">
-        <div class="hd">
+        <div class="hd" title="Drag up/down to reposition">
+          <span class="grip" title="Drag up/down">⋮⋮</span>
           <span class="dot" id="fd-dot"></span><span class="ttl">FillDesk</span>
           <span class="ver" id="fd-ver"></span>
           <span class="sub" id="fd-sub">connecting…</span>
@@ -945,29 +1013,129 @@
           <div class="sum" id="fd-sum" style="display:none"></div>
         </div>
       </div>`;
-    host.appendChild(root);
+    let shadow;
+    try { shadow = host.attachShadow({ mode: 'open' }); } catch (e) { shadow = host; }
+    shadow.appendChild(root);
 
     const $ = (id) => root.querySelector('#' + id);
     progEl = $('fd-prog');
     logEl = $('fd-log');
     headEl = $('fd-sub');
 
+    function ensureAttached() {
+      if (!mounted) return;
+      if (!host.isConnected || !document.contains(host)) {
+        const targetParent = document.documentElement || document.body;
+        if (targetParent) {
+          try { targetParent.appendChild(host); } catch (e) {}
+        }
+      }
+    }
+
     function mount() {
-      if (mounted) return;
+      const targetParent = document.documentElement || document.body;
+      if (!targetParent) return setTimeout(mount, 200);
+      if (mounted) {
+        ensureAttached();
+        show();
+        return;
+      }
       try {
         const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
         root.querySelector('#fd-ver').textContent = 'v' + build;
       } catch (e) { /* a page that blocks chrome APIs still gets a panel */ }
-      if (!document.body) return setTimeout(mount, 200);
       mounted = true;
-      document.body.appendChild(host);
-      try { host.dataset.filldeskBuild = chrome.runtime.id + '@' + chrome.runtime.getManifest().version; } catch (e) { /* ignore */ }
-      const collapsed = localStorage.getItem('filldesk_collapsed') === '1';
+      targetParent.appendChild(host);
+      try { host.dataset.filldeskBuild = (chrome.runtime.id || 'ext') + '@' + ((chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?'); } catch (e) { /* ignore */ }
+      const collapsed = storageGet('filldesk_collapsed') === '1';
       if (collapsed) root.querySelector('.box').classList.add('hide');
+
+      function clampPosition() {
+        if (!host.style.top || host.style.top === 'auto') return;
+        const box = root.querySelector('.box');
+        const boxHeight = (box && box.offsetHeight) || host.offsetHeight || 50;
+        const maxTop = Math.max(8, window.innerHeight - boxHeight - 8);
+        const curTop = parseInt(host.style.top, 10);
+        if (!isNaN(curTop)) {
+          const target = Math.max(8, Math.min(maxTop, curTop));
+          host.style.top = target + 'px';
+        }
+      }
+
+      const savedTop = parseInt(storageGet('filldesk_panel_top'), 10);
+      if (!isNaN(savedTop)) {
+        host.style.bottom = 'auto';
+        host.style.top = savedTop + 'px';
+        setTimeout(clampPosition, 40);
+      }
+
+      const hd = root.querySelector('.hd');
+      let dragging = false;
+      let startClientY = 0;
+      let startTop = 0;
+
+      if (hd) {
+        hd.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0 && e.pointerType === 'mouse') return;
+          if (e.target.closest('button, input, a, select')) return;
+
+          dragging = true;
+          hd.classList.add('dragging');
+          startClientY = e.clientY;
+          const rect = host.getBoundingClientRect();
+          startTop = rect.top;
+          host.style.bottom = 'auto';
+          host.style.top = startTop + 'px';
+
+          try { hd.setPointerCapture(e.pointerId); } catch (_) {}
+
+          const onMove = (ev) => {
+            if (!dragging) return;
+            ev.preventDefault();
+            const delta = ev.clientY - startClientY;
+            const box = root.querySelector('.box');
+            const boxHeight = (box && box.offsetHeight) || host.offsetHeight || 50;
+            const maxTop = Math.max(8, window.innerHeight - boxHeight - 8);
+            const newTop = Math.max(8, Math.min(maxTop, startTop + delta));
+            host.style.top = newTop + 'px';
+          };
+
+          const onUp = (ev) => {
+            if (!dragging) return;
+            dragging = false;
+            hd.classList.remove('dragging');
+            try { hd.releasePointerCapture(ev.pointerId); } catch (_) {}
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+
+            const finalTop = parseInt(host.style.top, 10);
+            if (!isNaN(finalTop)) {
+              storageSet('filldesk_panel_top', String(finalTop));
+            }
+          };
+
+          window.addEventListener('pointermove', onMove, { passive: false });
+          window.addEventListener('pointerup', onUp);
+          window.addEventListener('pointercancel', onUp);
+          e.preventDefault();
+        });
+
+        hd.addEventListener('dblclick', (e) => {
+          if (e.target.closest('button, input, a, select')) return;
+          host.style.top = 'auto';
+          host.style.bottom = '18px';
+          storageSet('filldesk_panel_top', '');
+        });
+
+        window.addEventListener('resize', clampPosition);
+      }
+
       $('fd-min').onclick = () => {
         const box = root.querySelector('.box');
         box.classList.toggle('hide');
-        localStorage.setItem('filldesk_collapsed', box.classList.contains('hide') ? '1' : '0');
+        storageSet('filldesk_collapsed', box.classList.contains('hide') ? '1' : '0');
+        setTimeout(clampPosition, 40);
       };
       $('fd-fill').onclick = () => run();
       $('fd-scan').onclick = () => preview();
@@ -981,7 +1149,7 @@
       $('fd-ra').onclick = () => ui.answerReview('all');
       $('fd-rs').onclick = () => ui.answerReview('stop');
       $('fd-packet').onclick = async () => {
-        const last = localStorage.getItem('filldesk_last_job');
+        const last = storageGet('filldesk_last_job');
         if (!last) return line({ kind: 'warn', text: 'save the job first' });
         buildPacketForSavedJob(last);
       };
@@ -995,9 +1163,30 @@
       while (logEl.children.length > 140) logEl.lastChild.remove();
     }
 
+    function show() {
+      if (host) host.style.display = '';
+      ensureAttached();
+    }
+
+    function hide() {
+      if (host) host.style.display = 'none';
+    }
+
+    function toggleBox() {
+      const box = root.querySelector('.box');
+      if (box) {
+        box.classList.toggle('hide');
+        storageSet('filldesk_collapsed', box.classList.contains('hide') ? '1' : '0');
+      }
+    }
+
     return {
       mount,
-      isMounted: () => mounted,
+      show,
+      hide,
+      toggleBox,
+      ensureAttached,
+      isMounted: () => mounted && host && host.isConnected,
       line,
       logLines(items) { logEl.innerHTML = ''; items.forEach(line); },
       counts(c) {
@@ -1086,7 +1275,7 @@
         box.querySelector('#fd-dopen').onclick = () => window.open(`${state.server}/#job=${jobId}`, '_blank');
       },
       savedJob(job) {
-        localStorage.setItem('filldesk_last_job', job.id);
+        storageSet('filldesk_last_job', job.id);
         const btn = root.querySelector('#fd-packet');
         btn.textContent = 'Build packet';
       },
@@ -1114,29 +1303,61 @@
   function looksLikeApplication() {
     if (isOwnDashboard()) return false;
     const host = location.hostname.toLowerCase();
-    if (ATS_HOSTS.some((h) => host.endsWith(h))) return true;
-    if (/\/(apply|application|posting|opening|job\/|jobs\/|career)/i.test(location.pathname)) return true;
-    // A page with a real form on it is worth offering the panel, whatever its title says.
-    return document.querySelectorAll('input:not([type=hidden]), textarea, select').length >= 6;
+    const path = location.pathname.toLowerCase();
+    const search = location.search.toLowerCase();
+
+    // 1. Blocked sites: Webmail, general social feeds, shopping, chat
+    if (BLOCKED_HOST_PATTERNS.some((p) => p.test(host))) return false;
+
+    // 2. LinkedIn: active ONLY on /jobs, /talent, /hiring (never on /feed, /messaging, /in, /mynetwork)
+    if (host === 'linkedin.com' || host.endsWith('.linkedin.com')) {
+      return /^\/(jobs|talent|hiring)\b/i.test(path);
+    }
+
+    // 3. Indeed: only on viewjob, rc, jobs, apply, cmp
+    if (host === 'indeed.com' || host.endsWith('.indeed.com')) {
+      return /(viewjob|rc|jobs|apply|cmp)/i.test(path) || search.includes('vjk=');
+    }
+
+    // 4. Glassdoor: job sections only
+    if (host === 'glassdoor.com' || host.endsWith('.glassdoor.com')) {
+      return /(job|jobs|overview)/i.test(path);
+    }
+
+    // 5. Dedicated ATS domains
+    if (ATS_HOSTS.some((h) => host === h || host.endsWith('.' + h))) return true;
+
+    // 6. Dedicated career/job subdomains on any enterprise domain (e.g. careers.honeywell.com, jobs.apple.com)
+    if (/(^|\.)(careers?|jobs?|talent|recruiting|hcm)\./i.test(host)) return true;
+
+    // 7. Path contains clear job application or career portal tokens
+    if (/(apply|application|posting|openings?|jobs?|careers?|vacanc\w*|requisition|portalcareer|employment|join-?us|work-?with-?us)\b/i.test(path)) return true;
+
+    // 8. Query string has job req or application parameters
+    if (/[?&](job_?id|req_?id|career_job_req_id|posting_?id|opening_?id|gh_jid|career_ns|currentjobid|jobid|reqid|requisitionid)\b/i.test(search)) return true;
+
+    // 9. Structured Data JSON-LD has JobPosting schema
+    if (jsonLdJobs().length > 0) return true;
+
+    // 10. Document title indicates job / career opportunity
+    const title = (document.title || '').toLowerCase();
+    if (/(career opportunities|job opportunities|job opening|apply for|application for|job details)\b/i.test(title)) return true;
+
+    // 11. Apply or Save Job action on screen AND at least 2 real input fields
+    const hasJobAction = Array.from(document.querySelectorAll('button, a, input[type=button], input[type=submit]')).some((el) => {
+      const t = (el.textContent || el.value || '').trim().toLowerCase();
+      return /^(apply|apply now|save job|submit application)$/i.test(t);
+    });
+    if (hasJobAction && document.querySelectorAll('input:not([type=hidden]), textarea, select').length >= 2) return true;
+
+    // 12. Candidate application form signature (file upload for resume + contact inputs)
+    const hasResumeUpload = !!document.querySelector('input[type=file]');
+    if (hasResumeUpload && document.querySelectorAll('input:not([type=hidden]), textarea, select').length >= 3) return true;
+
+    return false;
   }
 
-  async function boot() {
-    await loadConfig();
-    if (isOwnDashboard()) {
-      // Silent by design: the dashboard is FillDesk, not a form to fill.
-      window.__FILLDESK__ = 'own-origin';
-      return;
-    }
-    try {
-      const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
-      host.dataset.filldeskBuild = chrome.runtime.id + '@' + build;
-      console.info(`[FillDesk] content script v${build} on ${location.host}`
-        + ` (matcher ${window.FILLDESK_MATCHER ? 'ok' : 'MISSING'}, calendar ${window.FILLDESK_CAL ? 'ok' : 'MISSING'})`);
-    } catch (e) { /* logging must never break a page */ }
-    const APP_LIKE = looksLikeApplication();
-    if (IS_TOP && APP_LIKE) ui.mount();
-    if (localStorage.getItem('filldesk_review_each') === '1') { state.reviewEach = true; ui.setReviewEach(true); }
-
+  async function uiCheckServer() {
     if (!state.token) {
       ui.setHeader('add your token in the extension popup', false);
       return;
@@ -1151,6 +1372,65 @@
     }
   }
 
+  let lastHref = location.href;
+  function handleNavigation() {
+    if (!IS_TOP) return;
+    const isApp = looksLikeApplication();
+    if (isApp) {
+      if (!ui.isMounted()) {
+        ui.mount();
+        uiCheckServer();
+      } else {
+        ui.show();
+      }
+    } else {
+      if (ui.isMounted()) {
+        ui.hide();
+      }
+    }
+  }
+
+  function checkNavigation() {
+    if (location.href !== lastHref) {
+      lastHref = location.href;
+      handleNavigation();
+    } else if (IS_TOP && looksLikeApplication()) {
+      ui.ensureAttached();
+    }
+  }
+
+  async function boot() {
+    await loadConfig();
+    if (isOwnDashboard()) {
+      // Silent by design: the dashboard is FillDesk, not a form to fill.
+      window.__FILLDESK__ = 'own-origin';
+      return;
+    }
+    try {
+      const build = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '?';
+      console.info(`[FillDesk] content script v${build} on ${location.host}`
+        + ` (matcher ${window.FILLDESK_MATCHER ? 'ok' : 'MISSING'}, calendar ${window.FILLDESK_CAL ? 'ok' : 'MISSING'})`);
+    } catch (e) { /* logging must never break a page */ }
+    const APP_LIKE = looksLikeApplication();
+    if (IS_TOP && APP_LIKE) {
+      ui.mount();
+      uiCheckServer();
+    }
+    if (storageGet('filldesk_review_each') === '1') { state.reviewEach = true; ui.setReviewEach(true); }
+
+    // Run continuous lightweight check for SPA client-side navigations (e.g. LinkedIn, Workday)
+    setInterval(checkNavigation, 500);
+
+    window.addEventListener('popstate', () => { lastHref = location.href; handleNavigation(); });
+    window.addEventListener('hashchange', () => { lastHref = location.href; handleNavigation(); });
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('a, button, [role="button"], [role="link"], [role="tab"]')) {
+        setTimeout(checkNavigation, 250);
+        setTimeout(checkNavigation, 800);
+      }
+    }, { passive: true });
+  }
+
   chrome.storage.onChanged.addListener(() => { loadConfig().then(() => { state.snapshot = null; }); });
 
   chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
@@ -1158,14 +1438,45 @@
       try {
         if (isOwnDashboard()) return respond({ ok: false, error: 'FillDesk does not run on its own dashboard' });
         switch (msg && msg.type) {
-          case 'scan': respond({ ok: true, counts: await preview() }); break;
+          case 'url_changed': {
+            lastHref = location.href;
+            handleNavigation();
+            respond({ ok: true });
+            break;
+          }
+          case 'mount':
+          case 'toggle': {
+            if (IS_TOP) {
+              if (!ui.isMounted()) {
+                ui.mount();
+                ui.show();
+                uiCheckServer();
+              } else {
+                ui.show();
+                ui.toggleBox();
+              }
+            }
+            respond({ ok: true, mounted: ui.isMounted() });
+            break;
+          }
+          case 'scan': {
+            if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
+            respond({ ok: true, counts: await preview() });
+            break;
+          }
           case 'run': {
+            if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
             if (msg.external && IS_TOP) return respond({ ok: true, skipped: 'top frame drives the run' });
             await run();
             respond({ ok: true, host: location.hostname });
             break;
           }
-          case 'save-job': await saveJob(); respond({ ok: true, title: document.title }); break;
+          case 'save-job': {
+            if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
+            await saveJob();
+            respond({ ok: true, title: document.title });
+            break;
+          }
           case 'next': stepNext(); respond({ ok: true }); break;
           case 'status': respond({ ok: true, host: location.hostname, hasSnapshot: !!state.snapshot, fields: fieldElements().length, appLike: looksLikeApplication(), mounted: ui.isMounted() }); break;
           default: respond({ ok: false, error: 'unknown message' });
@@ -1178,5 +1489,5 @@
     return true;
   });
 
-  boot();
+  boot().catch((e) => { /* sandboxed or restricted frames fail quietly */ });
 })();

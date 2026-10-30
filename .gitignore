@@ -10,6 +10,7 @@ venv/
 .directory
 reports/
 GH.txt
+Text File.txt
 
 # private notes: competitive research, not product documentation
 REVIEW-swooped.md

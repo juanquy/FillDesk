@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from . import config, llm, packet as packet_mod, resume_export, resume_parse, sensitive, store
 from . import polish
+from . import notify
 
 Handler = Callable[["Api"], dict]
 
@@ -162,6 +163,7 @@ def r_settings_get(api: Api):
         return fail("dashboard origin only", 403)
     s = config.load_settings()
     s["llm"]["api_key"] = "***" if s["llm"].get("api_key") else ""
+    s["alerts"]["status"] = notify.status()
     return ok(s)
 
 
@@ -172,6 +174,8 @@ def r_settings_put(api: Api):
     patch = api.json() or {}
     if not (patch.get("llm") or {}).get("api_key"):
         patch.get("llm", {}).pop("api_key", None)  # never blank a stored key with the *** mask
+    if isinstance(patch.get("alerts"), dict):
+        patch["alerts"].pop("status", None)
     return ok(config.save_settings(patch))
 
 
@@ -537,6 +541,31 @@ def r_autofill_latest(api: Api):
     packets = [p for p in store.list_packets() if p.get("approved")]
     packets.sort(key=lambda p: p.get("created_at", ""), reverse=True)
     return ok({"packets": packets[:20]})
+
+
+@route("POST", "/api/notify")
+def r_notify(api: Api):
+    """One desktop alert, composed here from a fixed vocabulary.
+
+    The caller may name the field it is stuck on; it may not choose the sentence. That
+    keeps a buggy page from putting arbitrary text on the user's desktop, and keeps an
+    answer value out of a notification body that would otherwise sit in the desktop's
+    history and on the lock screen.
+    """
+    body = api.json() or {}
+    kind = str(body.get("kind") or "")
+    if kind not in ("waiting", "done", "test"):
+        return fail("kind must be waiting, done or test", 400)
+    alerts = config.load_settings().get("alerts", {})
+    if kind != "test" and not alerts.get("desktop", True):
+        return ok({"sent": False, "reason": "desktop alerts are off in Settings"})
+    try:
+        cooldown = int(alerts.get("cooldown_seconds", notify.DEFAULT_COOLDOWN))
+    except (TypeError, ValueError):
+        cooldown = notify.DEFAULT_COOLDOWN
+    result = notify.notify(kind, str(body.get("field") or "")[:90],
+                           cooldown=cooldown, force=(kind == "test"))
+    return ok(result)
 
 
 @route("POST", "/api/events")
