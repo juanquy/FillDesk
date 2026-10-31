@@ -626,9 +626,15 @@ def r_autofill_prepare_and_fill(api: Api):
         job_id = job["id"]
     else:
         job = store.get_job(job_id)
+        existing_q = set(job.get("questions") or [])
+        new_q = [q for q in filtered_questions if q not in existing_q]
+        if new_q:
+            job["questions"] = list(job.get("questions") or []) + new_q
+            job["updated_at"] = store.now()
+            store.save_job(job)
 
     # 2. Build packet (tailor resume, cover letter, drafted answers)
-    packet = packet_mod.build_packet(job_id)
+    packet = packet_mod.build_packet(job_id, extra_questions=filtered_questions)
     packet_id = packet["id"]
 
     # 3. Approve packet for this run

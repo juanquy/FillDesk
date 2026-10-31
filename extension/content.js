@@ -366,6 +366,20 @@
       }
       return document.body && document.body.contains(el);
     }
+    // Modern ATSs (Ashby, Greenhouse, etc.) style native radios/checkboxes with opacity: 0
+    // and overlay custom SVGs or icons. Do not reject on opacity: 0 if container is visible.
+    if (el.type === 'radio' || el.type === 'checkbox') {
+      const parent = el.closest('label, [class*="radio"], [class*="checkbox"], fieldset, form, section, main, body') || el.parentElement;
+      if (parent) {
+        const pcs = getComputedStyle(parent);
+        if (pcs.display === 'none' || pcs.visibility === 'hidden') return false;
+        if (parent.closest('[aria-hidden="true"],[hidden]')) return false;
+      }
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+      if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+      return true;
+    }
     const rect = el.getBoundingClientRect();
     if (rect.width < 2 && rect.height < 2) return false;
     const cs = getComputedStyle(el);
@@ -410,6 +424,19 @@
 
       const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
       if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue;
+      if (type === 'file') {
+        // Skip ATS "Autofill from resume" / "Parse resume" widgets (e.g. Ashby, Lever, Greenhouse)
+        // Dropping a file on these triggers ATS mutations that asynchronously wipe the form.
+        const container = el.closest('div, section, fieldset, form') || el.parentElement;
+        const containerText = container ? clean(container.textContent || '') : '';
+        const isAutofillWidget = el.closest('[class*="autofill" i], [class*="Autofill"], [data-qa*="autofill" i]') ||
+          /\b(autofill|auto-fill|pre-fill|prefill|import|parse)\s*(?:from|with|using)?\s*(?:your\s*)?(?:resume|cv|profile|linkedin)\b/i.test(
+            (el.getAttribute('aria-label') || '') + ' ' + (el.title || '') + ' ' + containerText
+          );
+        if (isAutofillWidget) continue;
+        out.push({ el, kind: 'input' });
+        continue;
+      }
       if (type === 'radio') {
         const name = el.name;
         if (name) {
@@ -440,6 +467,25 @@
     return out;
   }
 
+  function checkboxOptionLabel(el) {
+    if (!el) return '';
+    const l = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
+    if (l) return textOf(l);
+    const wrap = el.closest('label');
+    if (wrap) return clean(wrap.textContent.replace(el.value || '', ''));
+    let sib = el.nextElementSibling;
+    for (let hops = 0; sib && hops < 3; hops++, sib = sib.nextElementSibling) {
+      const t = textOf(sib);
+      if (t) return t;
+    }
+    sib = el.previousElementSibling;
+    for (let hops = 0; sib && hops < 2; hops++, sib = sib.previousElementSibling) {
+      const t = textOf(sib);
+      if (t) return t;
+    }
+    return el.value || '';
+  }
+
   function describe(entry, indexHint) {
     const { el, kind } = entry;
     const { label, legend, section } = labelText(el);
@@ -447,13 +493,15 @@
     const type = kind === 'radio' ? 'radio' : kind === 'checkbox' ? 'checkbox' : kind === 'select' ? 'select'
       : kind === 'textarea' ? 'textarea' : (el.type || 'text').toLowerCase();
     const grp = groupContext(el, kind);
-    const effectiveLabel = (kind === 'radio' && grp) ? grp : label;
+    const optLabel = kind === 'checkbox' ? checkboxOptionLabel(el) : '';
+    const effectiveLabel = (kind === 'radio' && grp) ? grp : (kind === 'checkbox' && grp ? grp : label);
     return {
       el, kind,
       tag: kind === 'editable' ? 'textarea' : el.tagName.toLowerCase(),
       type,
       label: effectiveLabel, legend,
       section: effectiveSection,
+      optionLabel: optLabel,
       name: el.name || '',
       id: el.id || '',
       testid: el.getAttribute('data-qa') || el.getAttribute('data-testid') || el.getAttribute('data-automation') || el.getAttribute('data-automation-name') || '',
@@ -468,7 +516,8 @@
         return d.split(/\s+/).map((i) => textOf(document.getElementById(i))).join(' ');
       })(),
       options: kind === 'select' ? optionsOf(el) : [],
-      radioLabels: kind === 'radio' ? (entry.group || []).map((r) => ({ el: r, label: radioLabel(r) })) : [],
+      radioLabels: kind === 'radio' ? (entry.group || []).map((r) => ({ el: r, label: radioLabel(r) }))
+        : (kind === 'checkbox' && optLabel ? [{ el, label: optLabel }] : []),
       visible: isVisible(el),
       required: el.required || el.getAttribute('aria-required') === 'true',
       currentValue: kind === 'select' ? '' : (el.value || '').toString(),
@@ -1033,7 +1082,8 @@
     const found = [];
     const push = (t) => {
       const s = clean(t);
-      if (s.length > 7 && !isFileUploadPrompt(s) && (/[?]$/.test(s) || /\b(experience with|why|describe|explain|how|what|tell|availability|expectation|rate your)\b/i.test(s)) && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
+      const isQ = (/[?]/i.test(s) || /\b(experience with|why|describe|explain|how|what|tell|availability|expectation|rate your|have you|do you|are you|will you|can you|which|years of|rate|rank)\b/i.test(s));
+      if (s.length > 7 && !isFileUploadPrompt(s) && isQ && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
     };
     document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question, .ashby-application-form-question-title, [class*="question-title"], [class*="field-label"]').forEach((el) => {
       if (el.closest('input[type=file]') || el.querySelector('input[type=file]')) return;
@@ -1460,8 +1510,7 @@
         dismissPanel();
       };
       $('fd-fill').onclick = () => {
-        if (state.snapshot) run();
-        else prepareAndFill();
+        prepareAndFill();
       };
       $('fd-quick').onclick = () => quickFillProfile();
       $('fd-scan').onclick = () => preview();
@@ -1529,10 +1578,10 @@
       setRunning(on) {
         running = on;
         const btn = root.querySelector('#fd-fill');
-        btn.textContent = on ? 'Filling… (click to stop)' : (state.snapshot ? 'Fill application' : 'Tailor & Fill');
+        btn.textContent = on ? 'Filling… (click to stop)' : 'Tailor & Fill';
         btn.classList.toggle('stop', on);
         if (on) btn.onclick = () => stop();
-        else btn.onclick = () => { if (state.snapshot) run(); else prepareAndFill(); };
+        else btn.onclick = () => prepareAndFill();
       },
       summary(r, navAllowed, undoable, stopped) {
         const sum = root.querySelector('#fd-sum');

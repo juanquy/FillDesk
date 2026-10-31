@@ -507,8 +507,8 @@ ABSOLUTE RULES
 3. You may re-word, re-order, re-emphasise, and re-frame what the profile states. You may not add facts.
 4. Never use em-dash-heavy AI phrasing, "I am excited", "leverage", "spearhead", "results-driven", or adjective stacking. Write like a competent human: plain verbs, concrete nouns, numbers where the profile has them.
 5. Compliance questions (race, ethnicity, gender, religion, sexual orientation, disability, veteran status, work authorization, citizenship, sponsorship, age/date of birth, arrests or convictions, any attestation or signature) must NOT be drafted. Return blocked=true and an empty answer for those, whatever else the user asks.
-6. Cover letter: 180-260 words, addressed to the company by name, opening line specific and true, two evidence points drawn verbatim-in-fact from the profile, no preamble, no "Dear Hiring Manager" unless the company is unknown.
-7. Resume: single column, markdown, one page (~450-550 words), headings exactly: # NAME, ## Summary, ## Experience, ## Skills, ## Education. Keep every claim traceable to the profile.
+6. Cover letter: 180-260 words, addressed to the company by name, opening line specific and true, two evidence points drawn verbatim-in-fact from the profile, no preamble, no "Dear Hiring Manager" unless the company is unknown. Sign off with the candidate's actual full name.
+7. Resume: single column, markdown, one page (~450-550 words), top header MUST be # {candidate's actual full name from profile}, followed by ## Summary, ## Experience, ## Skills, ## Education. Never write the literal placeholder word "NAME". Keep every claim traceable to the profile.
 8. Answers to employer questions: 60-140 words each unless the question clearly wants a number or yes/no. Answer the question that was actually asked.
 9. Never state or imply the candidate's work authorization, citizenship, visa or sponsorship status, age, date of birth, health, disability, veteran status, race, ethnicity, religion, sex, sexual orientation, marital status, criminal record, or any certification/attestation -- not even if the profile seems to imply it (a home address or a language is NOT evidence of any of these). Those statements belong to the candidate alone. If a document genuinely needs one, write [NEEDS INPUT] there instead.
 
@@ -714,6 +714,15 @@ def build_packet(job_id: str, extra_questions: list[str] | None = None, provider
         return result["text"]
 
     built["resume_markdown"] = scrub(built.get("resume_markdown", ""), "tailored resume")
+    cand_name = (profile.get("name") or "").strip()
+    if cand_name and built.get("resume_markdown"):
+        res_lines = built["resume_markdown"].split("\n")
+        for idx, line in enumerate(res_lines[:5]):
+            stripped = line.strip().lstrip("#").strip()
+            if stripped.upper() in ("NAME", "[NAME]", "YOUR NAME", "[YOUR NAME]", "CANDIDATE NAME"):
+                res_lines[idx] = f"# {cand_name}"
+                break
+        built["resume_markdown"] = "\n".join(res_lines)
     built["cover_letter"] = scrub(built.get("cover_letter", ""), "cover letter")
     for a in built["answers"]:
         if a.get("blocked"):

@@ -727,3 +727,65 @@ test('Cover letter and resume support both file upload and textarea modes', () =
   assert.equal(rResumeText.key, 'doc.resume');
   assert.equal(rResumeText.value, snapWithLetter.resume_markdown);
 });
+
+test('Ashby autofill widget is ignored and checkbox option matching works', () => {
+  const snap = {
+    identity: { email: 'test@example.com', phone: '5551234567' },
+    links: { github: 'https://github.com/myuser', other: 'https://example.com' },
+    preferences: { how_heard: 'www.linkedin.com/in/myuser' },
+    work_authorization: { status: 'Citizen', is_citizen: true, authorized: true, requires_sponsorship: false },
+    docs: { resume_docx: '/resume.docx' },
+  };
+
+  // 1. Autofill widget file input must be skipped
+  const fAutofill = f({
+    label: 'Autofill from resume',
+    help: 'Upload your resume here to autofill key application fields.',
+    type: 'file',
+    tag: 'input',
+  });
+  const rAutofill = M.classify(fAutofill, snap, {});
+  assert.equal(rAutofill.action, 'skip');
+  assert.equal(rAutofill.reason, 'ats autofill widget');
+
+  // Real resume file input must be uploaded
+  const fRealResume = f({ label: 'Resume*', type: 'file', tag: 'input', name: '_systemfield_resume' });
+  const rRealResume = M.classify(fRealResume, snap, {});
+  assert.equal(rRealResume.action, 'upload');
+  assert.equal(rRealResume.value, 'resume');
+
+  // 2. Checkbox option matching for "How did you hear about us?"
+  const fLinkedInChk = f({
+    label: 'How did you hear about us?*',
+    type: 'checkbox',
+    kind: 'checkbox',
+    optionLabel: 'LinkedIn',
+    radioLabels: [{ label: 'LinkedIn' }],
+  });
+  const rLinkedInChk = M.classify(fLinkedInChk, snap, {});
+  assert.equal(rLinkedInChk.action, 'fill');
+  assert.equal(rLinkedInChk.value, 'yes');
+
+  const fIndeedChk = f({
+    label: 'How did you hear about us?*',
+    type: 'checkbox',
+    kind: 'checkbox',
+    optionLabel: 'Indeed',
+    radioLabels: [{ label: 'Indeed' }],
+  });
+  const rIndeedChk = M.classify(fIndeedChk, snap, {});
+  assert.equal(rIndeedChk.action, 'skip');
+  assert.equal(rIndeedChk.reason, 'not selected');
+
+  // 3. Links fallback: Personal Website falls back to GitHub when portfolio is blank
+  const fWeb = f({ label: 'Website / Portfolio', type: 'text', tag: 'input' });
+  const rWeb = M.classify(fWeb, snap, {});
+  assert.equal(rWeb.action, 'fill');
+  assert.equal(rWeb.value, 'https://github.com/myuser');
+
+  // 4. Work auth autofills by default when settings is empty object
+  const fAuth = f({ label: 'Are you authorized to work in the United States?*', type: 'radio' });
+  const rAuth = M.classify(fAuth, snap, {});
+  assert.equal(rAuth.action, 'fill');
+  assert.equal(rAuth.value, 'Yes');
+});

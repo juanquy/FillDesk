@@ -809,11 +809,11 @@
     //    legal problem for the applicant, not a formatting problem.
     for (const b of BLOCKED) {
       if (b.rx.test(n)) {
-        if (b.category === 'work_authorization' && settings && settings.autofill_work_auth) {
+        if (b.category === 'work_authorization' && (!settings || settings.autofill_work_auth !== false)) {
           const wa = classifyWorkAuth(field, n, snap);
           if (wa) return wa;
         }
-        if ((b.category === 'protected_class' || b.category === 'disability' || b.category === 'veteran') && settings && settings.autofill_eeoc) {
+        if ((b.category === 'protected_class' || b.category === 'disability' || b.category === 'veteran') && (!settings || settings.autofill_eeoc !== false)) {
           const eeoc = classifyEEOC(field, n, snap);
           if (eeoc) return eeoc;
         }
@@ -922,6 +922,11 @@
       out.review = chosen.review || null;
 
       if (chosen.key === 'doc.resume') {
+        if (/(autofill|auto-fill|pre-fill|prefill|import|parse)\s*(?:from|with|using)?\s*(?:your\s*)?(?:resume|cv)/i.test(n)) {
+          out.action = 'skip';
+          out.reason = 'ats autofill widget';
+          return out;
+        }
         if (field.tag === 'textarea' || field.type === 'textarea') {
           const md = (snap.resume_markdown || '').trim();
           out.action = md ? 'fill' : 'skip';
@@ -1030,8 +1035,12 @@
           value = (snap.preferences && snap.preferences.how_heard) || resolve('misc.how_heard', snap) || '';
           if (!value) { out.action = 'skip'; out.reason = 'only you know how you found it'; return out; }
           if (field.type === 'checkbox' || field.kind === 'checkbox') {
-            const isMatch = booleanFor(field.label, value);
-            if (isMatch === true) {
+            const opt = field.optionLabel || (field.radioLabels && field.radioLabels[0] && field.radioLabels[0].label) || field.label;
+            const normOpt = norm(opt);
+            const normVal = norm(value);
+            const isMatch = (normOpt && normVal && (normOpt.includes(normVal) || normVal.includes(normOpt))) ||
+                            booleanFor(opt, value) === true;
+            if (isMatch) {
               out.action = 'fill';
               out.value = 'yes';
               out.confidence = 0.95;
@@ -1068,6 +1077,10 @@
         value = digits(resolve('identity.phone', snap));
       } else if (chosen.key.indexOf('links.') === 0) {
         value = resolve(chosen.key, snap);
+        if (!value) {
+          if (chosen.key === 'links.portfolio') value = resolve('links.github', snap) || resolve('links.other', snap);
+          else if (chosen.key === 'links.github') value = resolve('links.portfolio', snap) || resolve('links.other', snap);
+        }
         if (value && !/^https?:\/\//i.test(value)) {
           value = 'https://' + value;
         }
