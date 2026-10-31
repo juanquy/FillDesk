@@ -159,8 +159,8 @@ def r_token(api: Api):
 
 @route("GET", "/api/settings")
 def r_settings_get(api: Api):
-    if not api.is_dashboard:
-        return fail("dashboard origin only", 403)
+    if not (api.is_dashboard or api.is_extension):
+        return fail("dashboard or extension origin only", 403)
     s = config.load_settings()
     s["llm"]["api_key"] = "***" if s["llm"].get("api_key") else ""
     s["alerts"]["status"] = notify.status()

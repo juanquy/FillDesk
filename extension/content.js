@@ -160,7 +160,11 @@
     const stored = await chrome.storage.local.get(['server', 'token', 'settings']);
     state.server = stored.server || DEFAULT_SERVER;
     state.token = stored.token || '';
-    state.settings = stored.settings || {};
+    state.settings = {
+      autofill_work_auth: true,
+      autofill_eeoc: true,
+      ...(stored.settings || {}),
+    };
   }
 
   async function api(path, opts = {}) {

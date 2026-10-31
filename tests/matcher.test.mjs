@@ -622,3 +622,68 @@ test('Ashby HQ fields: phone type=tel, checkbox how_heard, and skill proficiency
   assert.equal(rAWS.action, 'fill');
   assert.ok(['Intermediate', 'Advanced'].includes(rAWS.value));
 });
+
+test('Ashby HQ: Are you authorized to work in the US matches work_authorization, not address.line2', () => {
+  const snapCitizen = {
+    ...SNAP,
+    work_authorization: { status: 'Citizen', is_citizen: true, authorized: true, requires_sponsorship: false },
+    review_only: { work_authorization: 'Citizen' },
+  };
+
+  const fWorkAuth = f({
+    label: 'Are you authorized to work in the United States?*',
+    type: 'radio',
+    tag: 'input',
+    options: [{ label: 'Yes' }, { label: 'No' }],
+  });
+
+  const rWorkAuth = M.classify(fWorkAuth, snapCitizen, { autofill_work_auth: true });
+  assert.equal(rWorkAuth.action, 'fill');
+  assert.equal(rWorkAuth.key, 'work_authorization.authorized');
+  assert.equal(rWorkAuth.value, 'Yes');
+
+  const fSponsorship = f({
+    label: 'Will you now, or in the future, require sponsorship for an employment visa status?*',
+    type: 'radio',
+    tag: 'input',
+    options: [{ label: 'Yes' }, { label: 'No' }],
+  });
+
+  const rSponsorship = M.classify(fSponsorship, snapCitizen, { autofill_work_auth: true });
+  assert.equal(rSponsorship.action, 'fill');
+  assert.equal(rSponsorship.key, 'work_authorization.sponsorship');
+  assert.equal(rSponsorship.value, 'No');
+});
+
+test('Ashby HQ: unlisted skills select None and option matcher supports Basic alias', () => {
+  const snapNoAWS = {
+    ...SNAP,
+    skills: ['Python', 'Bash', 'Defender for Endpoint', 'Vendor Management'],
+    resume_markdown: 'Python automation, Bash, Defender suite, Vendor SLAs',
+  };
+
+  const ashbyOpts = [
+    { label: 'None' },
+    { label: 'Basic' },
+    { label: 'Intermediate' },
+    { label: 'Advanced' },
+  ];
+
+  const fAWS = f({
+    label: 'How would you rate your hands-on AWS security experience?*',
+    type: 'radio',
+    tag: 'input',
+    radioLabels: ashbyOpts,
+  });
+
+  const rAWS = M.classify(fAWS, snapNoAWS, {});
+  assert.equal(rAWS.action, 'fill');
+  assert.equal(rAWS.value, 'None');
+  assert.equal(M.matchOption(ashbyOpts, rAWS.value), 0);
+
+  // Beginner alias matches Basic
+  assert.equal(M.matchOption(ashbyOpts, 'Beginner'), 1);
+  assert.equal(M.matchOption(ashbyOpts, 'Basic'), 1);
+  assert.equal(M.matchOption(ashbyOpts, 'Intermediate'), 2);
+  assert.equal(M.matchOption(ashbyOpts, 'Advanced'), 3);
+});

@@ -34,7 +34,7 @@
     ['protected_class', /\b(race|ethnic|gender|sex(uality|ual orientation)?|religion|creed|faith|national origin|nationality|indigenous|aboriginal|minority|lgbtq|queer|self[- ]identif\w*|demographic|eeo|equal opportunity)\b/],
     ['disability', /\b(disabilit\w+|accommodat\w+|ada\b|mobility|wheelchair|hearing (loss|impairment)|vision (loss|impairment)|mental health|ptsd)\b/],
     ['veteran', /\b(veteran\w*|armed forces|military service|active duty|discharge(d)? type|protected veteran|userra)\b/],
-    ['work_authorization', /\b(work (authorization|authorized|authorised)|legally authorized|citizen|citizenship|permanent resident|green card|immigration status|visa|sponsor(ship)?|h-?1b|opt\b|stem opt|employment eligibility|i-?9\b|passport)\b/],
+    ['work_authorization', /\b(work (authorization|authorized|authorised)|(legally )?authorized to work|legally authorized|citizen|citizenship|permanent resident|green card|immigration status|visa|sponsor(ship)?|h-?1b|opt\b|stem opt|employment eligibility|i-?9\b|passport)\b/],
     ['age', /\b(age|date of birth|dob\b|birth ?date|born on|year of birth|how old)\b|\b(are|were) you (?:over|under|at least|older than)?\s*1[6-9]\b|\b1[6-9]\s*(?:or older|or above|years of age|years old)\b|\bage requirement\b/],
     ['criminal', /\b(arrest\w*|convict\w*|felon\w*|misdemeanor|misdemeanour|criminal (record|history|background)|incarcerat\w*|court[- ]ordered|dishonorable discharge)\b/],
     ['legal_declaration', /\b(attest|affirm|hereby|under penalty|declaration|certif\w* (that|the)|sworn|notari\w+|electronic signature|e-signature|signature|initials?|i (certify|agree|consent|acknowledge)|terms (and )?(of )?(use|service)|opt[- ]?in|consent to|authorize (us|the company))\b/],
@@ -63,7 +63,7 @@
     { key: 'identity.email', rx: /e-?mail|email address/, autocomplete: ['email'] },
     { key: 'identity.phone', rx: /phone|mobile|telephone|cell(ular)? (number|phone)|contact number/, autocomplete: ['tel'] },
     { key: 'identity.location', rx: /\b(location\b|current location|where (are|do) you( currently)? (based|located|living|from)|based in|home ?town|hometown|city and state)\b/ },
-    { key: 'address.line2', rx: /(?:address\s*(?:line\s*)?2|apartment|suite|unit\s*(?:number|#)?|\bapt\b)/i, autocomplete: ['address-line2'] },
+    { key: 'address.line2', rx: /(?:address\s*(?:line\s*)?2|apartment|suite|\bunit\s*(?:number|#)?\b|\bapt\b)/i, autocomplete: ['address-line2'] },
     { key: 'address.line1', rx: /(?:address\s*(?:line\s*)?1|street\s*address|mailing\s*address|(?:^|\b)(?:home\s*)?address(?!\s*(?:line\s*)?2)\b)/i, autocomplete: ['address-line1'] },
     { key: 'address.city', rx: /\bcity\b|town|suburb/, autocomplete: ['address-level2'] },
     { key: 'address.state', rx: /\bstate\b|province|region|county/, autocomplete: ['address-level1'] },
@@ -343,6 +343,22 @@
       }
     }
 
+    // Proficiency matching: e.g. "Basic" vs "Beginner", "None" vs "No", "Advanced" vs "Expert"
+    const PROFICIENCY_ALIASES = [
+      [/^(none|no|not applicable|n\/a|never)/i, ['none', 'no', 'not applicable', 'n/a', "haven't", 'no experience', 'never']],
+      [/^(basic|beginner|novice|foundational|entry)/i, ['basic', 'beginner', 'novice', 'foundational', 'entry', 'entry-level', 'fundamentals']],
+      [/^(intermediate|competent|proficient|mid)/i, ['intermediate', 'competent', 'proficient', 'mid-level', 'mid', 'working knowledge', 'working experience']],
+      [/^(advanced|expert|senior)/i, ['advanced', 'expert', 'senior', 'deep expertise', 'subject matter expert']],
+    ];
+    for (const [rx, aliases] of PROFICIENCY_ALIASES) {
+      if (rx.test(w)) {
+        for (let i = 0; i < options.length; i++) {
+          const label = normalizeOption(options[i].label);
+          if (aliases.some(a => label === a || label.startsWith(a) || label.includes(a))) return i;
+        }
+      }
+    }
+
     // Month matching: e.g. "09" vs "September" vs "Sep" vs "9"
     if (/month/i.test(context || '')) {
       const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
@@ -409,11 +425,11 @@
   function isProficiencyOptions(options) {
     if (!options || options.length < 2) return false;
     const labels = options.map((o) => normalizeOption(o.label || ''));
-    const matches = labels.filter((l) => /\b(none|beginner|intermediate|advanced|expert|novice|proficient|competent|foundational)\b/i.test(l));
+    const matches = labels.filter((l) => /\b(none|basic|beginner|intermediate|advanced|expert|novice|proficient|competent|foundational)\b/i.test(l));
     return matches.length >= 2;
   }
 
-  function rateSkillExperience(topic, snap) {
+  function rateSkillExperience(topic, snap, options) {
     const t = norm(topic)
       .replace(/\b(how would you rate|rate your (level of )?experience with|level of (your )?experience with|experience with|familiarity with|proficiency in|what is your)\b/gi, '')
       .replace(/[*?:!]/g, '')
@@ -431,6 +447,7 @@
 
     let hits = 0;
     for (const w of words) {
+      if (/^(security|tools|ability|level|experience|hands|management)$/i.test(w)) continue;
       if (candidateText.includes(w)) hits++;
     }
 
@@ -444,12 +461,19 @@
       if (/\b(endpoint|intune|defender|ninjaone|rmm|mdm)\b/i.test(candidateText)) hits += 3;
     }
     if (/\b(aws|amazon web services)\b/i.test(t)) {
-      if (/\b(aws|cloud|security)\b/i.test(candidateText)) hits += 2;
+      if (/\b(aws|amazon web services)\b/i.test(candidateText)) hits += 3;
     }
 
+    const optLabels = (options || []).map((o) => normalizeOption(o.label || ''));
+    const hasNone = optLabels.some((l) => /^(none|no|not applicable|n\/a|never)\b/i.test(l));
+    const hasBasic = optLabels.some((l) => /^(basic|foundational|entry)\b/i.test(l));
+    const hasBeginner = optLabels.some((l) => /^(beginner|novice)\b/i.test(l));
+
     if (hits >= 3) return 'Advanced';
-    if (hits >= 1) return 'Intermediate';
-    return 'Beginner';
+    if (hits >= 2) return 'Intermediate';
+    if (hits >= 1) return hasBasic ? 'Basic' : (hasBeginner ? 'Beginner' : 'Basic');
+    if (hasNone) return 'None';
+    return null;
   }
 
   // ------------------------------------------------------------------ value shaping
@@ -845,7 +869,8 @@
       /\b(rate your (level of )?experience|level of (your )?experience|how would you rate|experience with|familiarity with|proficiency in)\b/i.test(n);
     if (isRating) {
       const qText = field.label || field.groupLabel || field.legend || '';
-      const level = rateSkillExperience(qText, snap);
+      const level = rateSkillExperience(qText, snap, field.radioLabels || field.options);
+      if (!level) return out;
       return {
         action: 'fill',
         key: 'skill_rating:' + clip(qText, 50),
