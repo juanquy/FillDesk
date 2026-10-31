@@ -17,7 +17,7 @@ _PATTERNS: list[tuple[str, str]] = [
     ("protected_class", r"\b(race|ethnic(ity| group)|gender identity|sex(ual orientation)?|religion|creed|national origin|indigenous|aboriginal|minority group|LGBTQ|self[- ]identif\w*)\b"),
     ("disability", r"\b(disabilit\w+|accommodat\w+|ADA|physical or mental (impairment|condition)|mobility|hearing loss|vision impairment)\b"),
     ("veteran", r"\b(veteran|veteran status|protected veteran|armed forces|active[- ]duty|military service member|discharged)\b"),
-    ("work_authorization", r"\b(work (authorization|authorised|authorized)|legally authorized|citizen(ship)?|national(ity)?|permanent resident|green card|visa|sponsor(ship)?|H-?1B|OPT|CPT|STEM OPT|require sponsorship|employment eligibility|I-?9)\b"),
+    ("work_authorization", r"\b(work (authorization|authorised|authorized)|(legally )?authorized to work|legally authorized|citizen(ship)?|national(ity)?|permanent resident|green card|visa|sponsor(ship)?|H-?1B|OPT|CPT|STEM OPT|require sponsorship|employment eligibility|I-?9)\b"),
     ("age", r"\b(age|date of birth|birth ?date|born|how old|year you (were )?graduated)\b"),
     ("criminal", r"\b(arrest\w*|convict\w*|felon\w*|criminal (history|record|background)|incarcerat\w*|court[- ]ordered|dishonorable discharge)\b"),
     ("legal_declaration", r"\b(attest|affirm|declaration|certif\w* that|i hereby|under penalty of|electronic signature|e-?signature|sworn|notari\w+|truthful and complete)\b"),

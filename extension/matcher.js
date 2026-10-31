@@ -1042,6 +1042,11 @@
         value = resolve('identity.location', snap);
       } else if (chosen.key === 'identity.phone') {
         value = digits(resolve('identity.phone', snap));
+      } else if (chosen.key.indexOf('links.') === 0) {
+        value = resolve(chosen.key, snap);
+        if (value && !/^https?:\/\//i.test(value)) {
+          value = 'https://' + value;
+        }
       } else if (chosen.key === 'skills') {
         value = (snap.skills || []).join(', ');
       } else {

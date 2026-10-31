@@ -518,19 +518,34 @@
 
   // ---------------------------------------------------------------- writing values
   function setNativeValue(el, value) {
-    const proto = el.tagName === 'INPUT' ? window.HTMLInputElement.prototype
-      : el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : null;
+    if (el.focus) el.focus({ preventScroll: true });
+    const isInput = el.tagName === 'INPUT';
+    const isTextarea = el.tagName === 'TEXTAREA';
+    const proto = isInput ? window.HTMLInputElement.prototype
+      : isTextarea ? window.HTMLTextAreaElement.prototype : null;
+
+    // 1. Reset React's internal value tracker so React's change detection triggers
     const track = el._valueTracker;
-    if (proto && Object.prototype.hasOwnProperty.call(el, 'value') === false) {
+    if (track && typeof track.setValue === 'function') {
+      track.setValue('');
+    }
+
+    // 2. Set value via prototype descriptor to bypass React's own property wrapper
+    if (proto) {
       const setter = Object.getOwnPropertyDescriptor(proto, 'value');
-      if (setter && setter.set) { setter.set.call(el, value); } else { el.value = value; }
+      if (setter && setter.set) {
+        setter.set.call(el, value);
+      } else {
+        el.value = value;
+      }
     } else {
       el.value = value;
     }
-    if (track && typeof track.setValue === 'function') track.setValue(String(el.value));
+
+    // 3. Dispatch composed bubbling input & change events for React, Vue, Angular
     el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertReplacementText' }));
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-    el.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
   function mark(el, cls) {
