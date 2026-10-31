@@ -977,7 +977,7 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
         },
         "links": links,
         "resume_markdown": packet.get("resume", {}).get("markdown", ""),
-        "cover_letter": packet.get("cover_letter", {}).get("text", ""),
+        "cover_letter": packet.get("cover_letter", {}).get("text", "") or cover_letter_with_rules(profile, job, []),
         "skills": profile.get("skills", []),
         "languages": profile.get("languages", []),
         "certifications": profile.get("certifications", []),
@@ -1025,19 +1025,20 @@ def build_profile_snapshot_from_profile(profile: dict, job: dict | None = None) 
         "id": "profile_direct",
         "answers": [],
         "resume": {"markdown": profile.get("master_resume_markdown", "")},
-        "cover_letter": {"text": ""},
+        "cover_letter": {"text": cover_letter_with_rules(profile, job, [])},
     }
     snap = build_autofill_snapshot(synthetic_packet, profile, job)
+    cand_name = store.slug(profile.get('name') or 'resume')
+    comp_name = store.slug(job.get('company')) if (job and job.get('company')) else ''
+    cover_qs = f"?fmt=docx&host={comp_name}" if comp_name else "?fmt=docx"
     snap["docs"] = {
         "resume_docx": "/api/profile/resume/file?fmt=docx",
         "resume_html": "/api/profile/resume/file?fmt=html",
-        "cover_letter_docx": "",
-        "cover_letter_txt": "",
+        "cover_letter_docx": f"/api/profile/cover/file{cover_qs}",
+        "cover_letter_txt": "/api/profile/cover/file?fmt=txt",
     }
-    cand_name = store.slug(profile.get('name') or 'resume')
-    comp_name = store.slug(job.get('company')) if (job and job.get('company')) else ''
     snap["doc_names"] = {
         "resume": f"{cand_name}-resume-{comp_name}.docx" if comp_name else f"{cand_name}-resume.docx",
-        "cover_letter": "",
+        "cover_letter": f"{cand_name}-cover-letter-{comp_name}.docx" if comp_name else f"{cand_name}-cover-letter.docx",
     }
     return snap

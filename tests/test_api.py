@@ -1337,12 +1337,19 @@ class GeneratedProseIsScrubbed(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(docx.startswith(b"PK"), "must return valid docx binary")
 
+        # Test profile cover letter file
+        code, cover_docx = call("GET", "/api/profile/cover/file?fmt=docx&host=acme.com", raw=True)
+        self.assertEqual(code, 200)
+        self.assertTrue(cover_docx.startswith(b"PK"), "must return valid cover letter docx binary")
+
         # Test snapshot source=profile
-        code, snap = call("GET", "/api/autofill/snapshot?source=profile")
+        code, snap = call("GET", "/api/autofill/snapshot?source=profile&host=acme.com")
         self.assertEqual(code, 200)
         self.assertTrue(snap.get("approved"))
         self.assertTrue(snap.get("is_profile_only"))
         self.assertIn("identity", snap)
+        self.assertIn("/api/profile/cover/file", snap.get("docs", {}).get("cover_letter_docx", ""))
+        self.assertTrue(bool(snap.get("cover_letter")), "must have baseline cover letter")
 
     def test_autofill_event_marks_job_applied(self):
         code, job = call("POST", "/api/jobs", {"title": "Test Applied Job", "company": "Applied Corp", "description": "Great job with many responsibilities."})

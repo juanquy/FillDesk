@@ -630,6 +630,7 @@
     const name = which === 'cover_letter'
       ? ((state.snapshot.doc_names || {}).cover_letter || 'cover-letter.docx')
       : ((state.snapshot.doc_names || {}).resume || 'resume.docx');
+    if (!path) return { ok: false, reason: `no ${which} document in snapshot` };
     const res = await send({ type: 'file', server: state.server, token: state.token, path });
     if (!res.ok) return { ok: false, reason: res.error };
     const bytes = Uint8Array.from(atob(res.base64), (c) => c.charCodeAt(0));
@@ -645,13 +646,21 @@
     } catch (e) {
       return { ok: false, reason: 'this uploader blocks programmatic files' };
     }
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    const dropzone = el.closest('[class*="drop"], [class*="upload"], [draggable]') || el.parentElement;
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    const dropzone = el.closest('[class*="drop"], [class*="upload"], [class*="input-file"], [draggable]') || el.parentElement;
     if (dropzone) {
-      const drop = new Event('drop', { bubbles: true });
-      try { drop.dataTransfer = dt; } catch (e) { /* some frameworks read a synthetic field */ }
-      dropzone.dispatchEvent(drop);
+      let dropEvent;
+      try {
+        dropEvent = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+      } catch (e) {
+        dropEvent = new Event('drop', { bubbles: true, cancelable: true });
+        try { Object.defineProperty(dropEvent, 'dataTransfer', { value: dt }); } catch (_) {}
+      }
+      dropzone.dispatchEvent(dropEvent);
+      if (dropzone !== el) {
+        try { el.dispatchEvent(dropEvent); } catch (_) {}
+      }
     }
     return { ok: true };
   }
@@ -1024,13 +1033,16 @@
     const found = [];
     const push = (t) => {
       const s = clean(t);
-      if (s.length > 7 && !isFileUploadPrompt(s) && (/[?]$/.test(s) || /\b(experience with|why|describe|explain|how|what| tell|availability|expectation)\b/i.test(s)) && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
+      if (s.length > 7 && !isFileUploadPrompt(s) && (/[?]$/.test(s) || /\b(experience with|why|describe|explain|how|what|tell|availability|expectation|rate your)\b/i.test(s)) && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
     };
-    document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question').forEach((el) => {
+    document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question, .ashby-application-form-question-title, [class*="question-title"], [class*="field-label"]').forEach((el) => {
       if (el.closest('input[type=file]') || el.querySelector('input[type=file]')) return;
       push(textOf(el));
     });
-    document.querySelectorAll('textarea, select').forEach((el) => { const l = labelText(el); push(l.label || l.legend || l.section); });
+    document.querySelectorAll('input:not([type=file]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select').forEach((el) => {
+      const l = labelText(el);
+      push(l.label || l.legend || l.section);
+    });
     return found.slice(0, 40);
   }
 
@@ -1079,6 +1091,10 @@
       if (seg && seg !== 'jobs' && seg !== 'company') return seg.replace(/[-_]+/g, ' ');
     }
     if (/workable\.com$/.test(host)) return (location.pathname.split('/').filter(Boolean)[0] || '').replace(/[-_]+/g, ' ');
+    if (/ashbyhq\.com$/.test(host)) {
+      const seg = location.pathname.split('/').filter(Boolean)[0];
+      if (seg && seg !== 'jobs' && seg !== 'company') return seg.replace(/[-_]+/g, ' ');
+    }
     return parts.length > 2 && !['www', 'jobs', 'boards', 'careers', 'apply'].includes(parts[0]) ? parts[0] : '';
   }
 
@@ -1279,7 +1295,7 @@
             <button class="btn" id="fd-save">Save job</button>
             <button class="btn" id="fd-next">Next page</button>
             <button class="btn" id="fd-packet">View packet</button>
-            <button class="btn" id="fd-cover">Cover letter</button>
+            <button class="btn" id="fd-cover" style="display:none">Cover letter</button>
             <button class="btn off" id="fd-review" title="ask before each field">Ask per field</button>
             <button class="btn" id="fd-settings">Settings</button>
           </div>
@@ -1452,7 +1468,7 @@
       $('fd-save').onclick = () => saveJob();
       $('fd-next').onclick = () => stepNext();
       $('fd-settings').onclick = () => chrome.runtime.sendMessage({ type: 'open-popup' });
-      $('fd-cover').onclick = () => draftCover();
+      if ($('fd-cover')) $('fd-cover').onclick = () => draftCover();
       $('fd-review').onclick = () => setReviewEach(!state.reviewEach);
       $('fd-ry').onclick = () => ui.answerReview('fill');
       $('fd-rn').onclick = () => ui.answerReview('skip');

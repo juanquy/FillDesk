@@ -236,6 +236,24 @@ def r_profile_resume_file(api: Api):
     return 200, {"__raw__": resume_export.to_docx(md, title), "__type__": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "__name__": name}
 
 
+@route("GET", "/api/profile/cover/file")
+def r_profile_cover_file(api: Api):
+    profile = store.load_profile()
+    fmt = api.q("fmt", "docx")
+    host = api.q("host", "")
+    comp_raw = host.split(".")[0] if host else ""
+    cand_name = store.slug(profile.get("name") or "resume")
+    comp_name = store.slug(comp_raw)
+    cover_name = f"{cand_name}-cover-letter-{comp_name}" if comp_name else f"{cand_name}-cover-letter"
+    job = {"company": comp_raw.replace("-", " ").title()} if comp_raw else {}
+    text = packet_mod.cover_letter_with_rules(profile, job, [])
+    if fmt == "txt":
+        return 200, {"__raw__": text.encode(), "__type__": "text/plain; charset=utf-8", "__name__": cover_name + ".txt"}
+    if fmt == "docx":
+        return 200, {"__raw__": resume_export.to_docx(text, "Cover letter"), "__type__": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "__name__": cover_name + ".docx"}
+    return 200, {"__raw__": resume_export.to_html(text, "Cover letter").encode(), "__type__": "text/html; charset=utf-8"}
+
+
 @route("POST", "/api/parse")
 def r_parse(api: Api):
     """Preview extraction without saving: {filename, base64} or {text}."""
@@ -510,6 +528,9 @@ def r_packet_file(api: Api, packet_id: str):
     comp_name = store.slug(p.get("company")) if p.get("company") else ""
     if kind == "cover":
         text = p.get("cover_letter", {}).get("text", "")
+        if not text:
+            job = store.get_job(p.get("job_id") or "") or {}
+            text = packet_mod.cover_letter_with_rules(profile, job, [])
         cover_name = f"{cand_name}-cover-letter-{comp_name}" if comp_name else f"{cand_name}-cover-letter"
         if fmt == "txt":
             return 200, {"__raw__": text.encode(), "__type__": "text/plain; charset=utf-8", "__name__": cover_name + ".txt"}

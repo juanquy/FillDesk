@@ -687,3 +687,43 @@ test('Ashby HQ: unlisted skills select None and option matcher supports Basic al
   assert.equal(M.matchOption(ashbyOpts, 'Intermediate'), 2);
   assert.equal(M.matchOption(ashbyOpts, 'Advanced'), 3);
 });
+
+test('Cover letter and resume support both file upload and textarea modes', () => {
+  const snapWithLetter = {
+    ...SNAP,
+    cover_letter: 'Dear Hiring Team,\nI am writing to apply for this role with deep enthusiasm and experience.',
+    resume_markdown: '# Jane Doe\n## Summary\nStaff systems engineer.',
+    docs: {
+      resume_docx: '/api/packets/123/file?fmt=docx&type=resume',
+      cover_letter_docx: '/api/packets/123/file?fmt=docx&type=cover',
+    },
+    doc_names: {
+      resume: 'jane-doe-resume.docx',
+      cover_letter: 'jane-doe-cover-letter.docx',
+    },
+  };
+
+  // 1. File input mode
+  const fCoverFile = f({ label: 'Cover Letter', type: 'file', tag: 'input', name: 'cover_letter' });
+  const rCoverFile = M.classify(fCoverFile, snapWithLetter, {});
+  assert.equal(rCoverFile.action, 'upload');
+  assert.equal(rCoverFile.value, 'cover_letter');
+
+  const fResumeFile = f({ label: 'Resume/CV*', type: 'file', tag: 'input', name: 'resume' });
+  const rResumeFile = M.classify(fResumeFile, snapWithLetter, {});
+  assert.equal(rResumeFile.action, 'upload');
+  assert.equal(rResumeFile.value, 'resume');
+
+  // 2. Textarea mode
+  const fCoverText = f({ label: 'Cover letter / Note to hiring team', type: 'textarea', tag: 'textarea', name: 'cover_letter_text' });
+  const rCoverText = M.classify(fCoverText, snapWithLetter, {});
+  assert.equal(rCoverText.action, 'fill');
+  assert.equal(rCoverText.key, 'doc.cover_letter');
+  assert.equal(rCoverText.value, snapWithLetter.cover_letter);
+
+  const fResumeText = f({ label: 'Paste your resume here', type: 'textarea', tag: 'textarea', name: 'resume_text' });
+  const rResumeText = M.classify(fResumeText, snapWithLetter, {});
+  assert.equal(rResumeText.action, 'fill');
+  assert.equal(rResumeText.key, 'doc.resume');
+  assert.equal(rResumeText.value, snapWithLetter.resume_markdown);
+});

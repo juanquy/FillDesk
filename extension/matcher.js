@@ -77,8 +77,8 @@
     { key: 'links.other', types: ['text', 'url', 'textarea'], rx: /other (link|url|profile)|additional (link|url)|social (media|link)/ },
 
     // -- documents
-    { key: 'doc.resume', types: ['file'], rx: /(resume|résumé|resumé|curriculum vitae|cv\b|latest resume|current resume|upload your resume)/ },
-    { key: 'doc.cover_letter', types: ['file'], rx: /(cover ?(letter|note)|letter of (intent|interest|application)|motivation letter|statement of interest)/ },
+    { key: 'doc.resume', types: ['file', 'textarea'], rx: /(resume|résumé|resumé|curriculum vitae|cv\b|latest resume|current resume|upload your resume)/ },
+    { key: 'doc.cover_letter', types: ['file', 'textarea', 'text'], rx: /(cover ?(letter|note)|letter of (intent|interest|application)|motivation letter|statement of interest)/ },
     { key: 'doc.other', types: ['file'], rx: /(transcript|writing sample|portfolio (file|upload)|certification file|additional document|supporting document|attachment)/ },
 
     // -- employment history (indexed; content.js maps "current"/"most recent" to index 0)
@@ -921,8 +921,32 @@
       out.method = ruleAutocomplete ? 'autocomplete' : 'label-rule';
       out.review = chosen.review || null;
 
-      if (chosen.key === 'doc.resume') { out.action = 'upload'; out.value = 'resume'; out.confidence = 0.9; return out; }
-      if (chosen.key === 'doc.cover_letter') { out.action = 'upload'; out.value = 'cover_letter'; out.confidence = 0.9; return out; }
+      if (chosen.key === 'doc.resume') {
+        if (field.tag === 'textarea' || field.type === 'textarea') {
+          const md = (snap.resume_markdown || '').trim();
+          out.action = md ? 'fill' : 'skip';
+          out.value = md;
+          if (!md) out.reason = 'no resume in snapshot';
+          return out;
+        }
+        out.action = 'upload';
+        out.value = 'resume';
+        out.confidence = 0.9;
+        return out;
+      }
+      if (chosen.key === 'doc.cover_letter') {
+        if (field.tag === 'textarea' || field.type === 'textarea' || field.type === 'text') {
+          const letter = (snap.cover_letter || '').trim();
+          out.action = letter ? 'fill' : 'skip';
+          out.value = letter;
+          if (!letter) out.reason = 'no cover letter in snapshot';
+          return out;
+        }
+        out.action = 'upload';
+        out.value = 'cover_letter';
+        out.confidence = 0.9;
+        return out;
+      }
       if (chosen.key === 'doc.other') { out.action = 'skip'; out.reason = 'upload needs your judgement'; return out; }
 
       let value = '';
