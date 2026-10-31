@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -e
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SERVICE="filldesk.service"
+URL="http://127.0.0.1:8756"
+
+is_running() {
+    curl -s --connect-timeout 1 "$URL/api/status" > /dev/null 2>&1
+}
+
+start_server() {
+    if is_running; then
+        echo "FillDesk server is already running at $URL"
+    else
+        echo "Starting FillDesk server..."
+        systemctl --user start "$SERVICE"
+        for i in {1..10}; do
+            if is_running; then
+                echo "FillDesk server started successfully at $URL"
+                return 0
+            fi
+            sleep 0.5
+        done
+        echo "Warning: FillDesk service started but port 8756 is not responding yet."
+    fi
+}
+
+stop_server() {
+    echo "Stopping FillDesk server..."
+    systemctl --user stop "$SERVICE" 2>/dev/null || true
+    fuser -k 8756/tcp 2>/dev/null || true
+    echo "FillDesk server stopped."
+}
+
+open_dashboard() {
+    start_server
+    if command -v xdg-open > /dev/null 2>&1; then
+        xdg-open "$URL" > /dev/null 2>&1 &
+    elif command -v google-chrome > /dev/null 2>&1; then
+        google-chrome "$URL" > /dev/null 2>&1 &
+    fi
+}
+
+status_server() {
+    if is_running; then
+        echo "● FillDesk server is RUNNING at $URL"
+        systemctl --user status "$SERVICE" --no-pager -n 3 || true
+    else
+        echo "○ FillDesk server is STOPPED"
+        systemctl --user status "$SERVICE" --no-pager -n 3 2>/dev/null || true
+    fi
+}
+
+case "${1:-open}" in
+    start)
+        start_server
+        ;;
+    stop)
+        stop_server
+        ;;
+    restart)
+        stop_server
+        sleep 1
+        start_server
+        ;;
+    status)
+        status_server
+        ;;
+    open)
+        open_dashboard
+        ;;
+    logs)
+        journalctl --user -u "$SERVICE" -f
+        ;;
+    enable)
+        systemctl --user enable "$SERVICE"
+        echo "FillDesk enabled to automatically start on login."
+        ;;
+    disable)
+        systemctl --user disable "$SERVICE"
+        echo "FillDesk disabled from starting on login."
+        ;;
+    *)
+        echo "Usage: filldesk [start|stop|restart|status|open|logs|enable|disable]"
+        echo "  (Default with no arguments: starts server & opens dashboard in browser)"
+        exit 1
+        ;;
+esac
