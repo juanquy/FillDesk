@@ -199,6 +199,7 @@
       '[class*="form-group"]',
       '[class*="question-container"]',
       '[class*="application-question"]',
+      '[class*="marginY"]',
       '[data-qa*="field"]',
       '[data-automation*="field"]',
       'fieldset',
@@ -459,6 +460,13 @@
         }
       }
       if (type === 'checkbox') { out.push({ el, kind: 'checkbox' }); continue; }
+      const isCombobox = el.getAttribute('role') === 'combobox' ||
+        el.getAttribute('aria-haspopup') === 'listbox' ||
+        (el.tagName === 'BUTTON' && el.getAttribute('aria-expanded') != null && el.closest('[class*="select" i]'));
+      if (isCombobox) {
+        out.push({ el, kind: 'select', isCustomCombobox: true });
+        continue;
+      }
       if (el.tagName === 'SELECT') { out.push({ el, kind: 'select' }); continue; }
       if (el.tagName === 'TEXTAREA') { out.push({ el, kind: 'textarea' }); continue; }
       if (el.tagName === 'INPUT') { out.push({ el, kind: 'input' }); continue; }
@@ -486,6 +494,21 @@
     return el.value || '';
   }
 
+  function customComboboxOptions(el) {
+    const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    let listbox = controls ? document.getElementById(controls) : null;
+    if (!listbox) {
+      listbox = el.closest('[class*="select"], [class*="Select"], [class*="dropdown"], [class*="field"]')?.querySelector('[role="listbox"], [role="menu"]');
+    }
+    if (!listbox) return [];
+    return Array.from(listbox.querySelectorAll('[role="option"], [role="menuitem"], li')).map((o) => ({
+      label: clean(o.textContent) || o.getAttribute('data-value') || '',
+      value: o.getAttribute('data-value') || clean(o.textContent) || '',
+      selected: o.getAttribute('aria-selected') === 'true',
+      disabled: o.getAttribute('aria-disabled') === 'true',
+    }));
+  }
+
   function describe(entry, indexHint) {
     const { el, kind } = entry;
     const { label, legend, section } = labelText(el);
@@ -497,7 +520,7 @@
     const effectiveLabel = (kind === 'radio' && grp) ? grp : (kind === 'checkbox' && grp ? grp : label);
     return {
       el, kind,
-      tag: kind === 'editable' ? 'textarea' : el.tagName.toLowerCase(),
+      tag: entry.isCustomCombobox ? 'select' : (kind === 'editable' ? 'textarea' : el.tagName.toLowerCase()),
       type,
       label: effectiveLabel, legend,
       section: effectiveSection,
@@ -515,7 +538,7 @@
         if (!d) return '';
         return d.split(/\s+/).map((i) => textOf(document.getElementById(i))).join(' ');
       })(),
-      options: kind === 'select' ? optionsOf(el) : [],
+      options: kind === 'select' ? (entry.isCustomCombobox ? customComboboxOptions(el) : optionsOf(el)) : [],
       radioLabels: kind === 'radio' ? (entry.group || []).map((r) => ({ el: r, label: radioLabel(r) }))
         : (kind === 'checkbox' && optLabel ? [{ el, label: optLabel }] : []),
       visible: isVisible(el),
@@ -523,6 +546,7 @@
       currentValue: kind === 'select' ? '' : (el.value || '').toString(),
       dateHint: M.dateHintFor({ placeholder: el.getAttribute('placeholder') || '', name: el.name || '', id: el.id || '' }),
       index: indexHint || 0,
+      isCustomCombobox: !!entry.isCustomCombobox,
     };
   }
 
@@ -549,7 +573,7 @@
     for (const entry of fieldElements()) {
       const desc = describe(entry, 0);
       const probe = M.classify(desc, state.snapshot || emptySnap(), state.settings);
-      if (probe.key && /^(exp|edu)\./.test(probe.key)) {
+      if (probe.key && /^(exp|edu|ref)\./.test(probe.key)) {
         const bucket = probe.key.split('.')[1];
         desc.index = counters[bucket] || 0;
         counters[bucket] = desc.index + 1;
@@ -595,6 +619,10 @@
     el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertReplacementText' }));
     el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+    // 4. Dispatch blur event and blur element so React forms (Rippling One-UI, Formik, React Hook Form) commit and validate
+    el.dispatchEvent(new FocusEvent('blur', { bubbles: true, composed: true }));
+    if (typeof el.blur === 'function') el.blur();
   }
 
   function mark(el, cls) {
@@ -616,18 +644,74 @@
     return el.value === value || String(el.value).length > 0;
   }
 
-  function fillSelect(desc, value, context) {
-    const ctx = context || desc.context || desc.key;
-    const idx = M.matchOption(desc.options, value, ctx);
-    if (idx < 0) return false;
+  async function fillSelect(desc, value, context) {
     const el = desc.el;
-    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value');
-    el.focus({ preventScroll: true });
-    if (nativeSetter && nativeSetter.set) nativeSetter.set.call(el, desc.options[idx].value);
-    else el.selectedIndex = idx;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
+    if (el.tagName === 'SELECT') {
+      const ctx = context || desc.context || desc.key;
+      const idx = M.matchOption(desc.options, value, ctx);
+      if (idx < 0) return false;
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value');
+      el.focus({ preventScroll: true });
+      if (nativeSetter && nativeSetter.set) nativeSetter.set.call(el, desc.options[idx].value);
+      else el.selectedIndex = idx;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new FocusEvent('blur', { bubbles: true, composed: true }));
+      if (typeof el.blur === 'function') el.blur();
+      return true;
+    }
+    return await fillCustomCombobox(desc, value, context);
+  }
+
+  async function fillCustomCombobox(desc, value, context) {
+    const el = desc.el;
+    if (el.focus) el.focus({ preventScroll: true });
+    const isComboboxExpanded = el.getAttribute('aria-expanded') === 'true' || el.checked;
+    if (!isComboboxExpanded) el.click();
+    await sleep(200);
+
+    const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    let container = controls ? document.getElementById(controls) : null;
+    if (!container) {
+      container = el.closest('[class*="select"], [class*="Select"], [class*="dropdown"]') || document.body;
+    }
+    const optionSelector = '[role="option"], [role="menuitem"], [data-testid*="option"], [class*="option-item"], [class*="SelectOption"], li[data-value], li[role="option"]';
+    let optionEls = Array.from(document.querySelectorAll(optionSelector)).filter(isVisible);
+    if (!optionEls.length && container) {
+      optionEls = Array.from(container.querySelectorAll(optionSelector));
+    }
+    if (!optionEls.length) {
+      const listbox = document.querySelector('[role="listbox"], [role="menu"], [class*="SelectMenu"], [class*="popover"]');
+      if (listbox) optionEls = Array.from(listbox.querySelectorAll('li, button, div[tabindex]')).filter(isVisible);
+    }
+    if (!optionEls.length) return false;
+
+    const opts = optionEls.map((o) => ({
+      label: clean(o.textContent) || o.getAttribute('data-value') || '',
+      value: o.getAttribute('data-value') || clean(o.textContent) || '',
+    }));
+    const ctx = context || desc.context || desc.key;
+    let idx = M.matchOption(opts, value, ctx);
+    if (idx < 0) {
+      for (let i = 0; i < opts.length; i++) {
+        if (M.booleanFor(opts[i].label, value) === true) { idx = i; break; }
+        if (M.normalizeOption(opts[i].label) === M.normalizeOption(value)) { idx = i; break; }
+      }
+    }
+    if (idx >= 0 && optionEls[idx]) {
+      const isOptionSelected = optionEls[idx].getAttribute('aria-selected') === 'true' || optionEls[idx].checked;
+      if (!isOptionSelected) {
+        optionEls[idx].scrollIntoView({ block: 'nearest' });
+        optionEls[idx].click();
+      }
+      optionEls[idx].dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(100);
+      el.dispatchEvent(new FocusEvent('blur', { bubbles: true, composed: true }));
+      if (typeof el.blur === 'function') el.blur();
+      return true;
+    }
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return false;
   }
 
   function fillRadio(desc, value, context) {
@@ -689,15 +773,17 @@
     const file = new File([bytes], name, { type: mime, lastModified: Date.now() });
     const dt = new DataTransfer();
     dt.items.add(file);
-    const el = desc.el;
+    const targetInput = (desc.el.tagName === 'INPUT' && desc.el.type === 'file')
+      ? desc.el
+      : (desc.el.querySelector('input[type="file"]') || desc.el.parentElement?.querySelector('input[type="file"]') || desc.el);
     try {
-      el.files = dt.files;
+      targetInput.files = dt.files;
     } catch (e) {
       return { ok: false, reason: 'this uploader blocks programmatic files' };
     }
-    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-    const dropzone = el.closest('[class*="drop"], [class*="upload"], [class*="input-file"], [draggable]') || el.parentElement;
+    targetInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    targetInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    const dropzone = desc.el.closest('[class*="drop"], [class*="upload"], [class*="input-file"], [draggable]') || desc.el.parentElement || desc.el;
     if (dropzone) {
       let dropEvent;
       try {
@@ -707,8 +793,8 @@
         try { Object.defineProperty(dropEvent, 'dataTransfer', { value: dt }); } catch (_) {}
       }
       dropzone.dispatchEvent(dropEvent);
-      if (dropzone !== el) {
-        try { el.dispatchEvent(dropEvent); } catch (_) {}
+      if (dropzone !== targetInput) {
+        try { targetInput.dispatchEvent(dropEvent); } catch (_) {}
       }
     }
     return { ok: true };
@@ -793,11 +879,18 @@
     ui.setRunning(true);
     const results = { filled: 0, uploaded: 0, unmatched: 0, blocked: 0, review: 0, unverified: 0, failed: [] };
     const delay = Number(state.settings.visible_delay_ms ?? 260);
+
+    // Reorder: run all fields first, then file uploads last to prevent ATS background resume parsers
+    // from overwriting inputs as they are typed.
+    const nonUploads = state.plan.filter((item) => item.decision.action !== 'upload');
+    const uploads = state.plan.filter((item) => item.decision.action === 'upload');
+    const executionPlan = [...nonUploads, ...uploads];
+
     let i = 0;
-    for (const item of state.plan) {
+    for (const item of executionPlan) {
       if (state.cancelled) break;
       i++;
-      ui.progress(i, state.plan.length);
+      ui.progress(i, executionPlan.length);
       const { desc, decision } = item;
       if (decision.action === 'block') { results.blocked++; mark(desc.el, 'blocked'); continue; }
       if (decision.action === 'skip') {
@@ -850,7 +943,7 @@
 
         desc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         let ok = false;
-        if (desc.kind === 'select') ok = fillSelect(desc, decision.value, decision.context || decision.key);
+        if (desc.kind === 'select') ok = await fillSelect(desc, decision.value, decision.context || decision.key);
         else if (desc.kind === 'radio') ok = fillRadio(desc, decision.value, decision.context || decision.key);
         else if (desc.kind === 'checkbox') ok = fillCheckbox(desc, decision.value);
         else if (desc.kind === 'editable') { desc.el.focus(); document.execCommand('insertText', false, decision.value); ok = (desc.el.textContent || '').includes(decision.value.slice(0, 24)); }
@@ -869,6 +962,24 @@
         results.failed.push(`${clipLabel(desc)}: ${e.message}`);
       }
       await sleep(delay);
+    }
+
+    // Watchdog pass: ATS Single Page Apps (Rippling, Ashby, Lever) often trigger a background
+    // resume parse on file upload that asynchronously clears or overwrites input fields.
+    if (results.uploaded > 0) {
+      await sleep(1500);
+      for (const item of nonUploads) {
+        if (item.decision.action === 'fill' && item.desc.el) {
+          const el = item.desc.el;
+          if (document.contains(el)) {
+            const isText = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
+            if (isText && (!el.value || el.value === '')) {
+              await fillText(item.desc, item.decision.value);
+              mark(el, 'filled');
+            }
+          }
+        }
+      }
     }
     state.running = false;
     ui.setRunning(false);
@@ -1082,13 +1193,20 @@
     const found = [];
     const push = (t) => {
       const s = clean(t);
-      const isQ = (/[?]/i.test(s) || /\b(experience with|why|describe|explain|how|what|tell|availability|expectation|rate your|have you|do you|are you|will you|can you|which|years of|rate|rank)\b/i.test(s));
+      const isQ = (/[?]/i.test(s) || /\b(experience with|why|describe|explain|how|what|tell|availability|expectation|rate your|have you|do you|are you|will you|can you|which|years of|rate|rank|agreement|agree to|consent to)\b/i.test(s));
       if (s.length > 7 && !isFileUploadPrompt(s) && isQ && !found.some((f) => f.toLowerCase() === s.toLowerCase())) found.push(s);
     };
-    document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question, .ashby-application-form-question-title, [class*="question-title"], [class*="field-label"]').forEach((el) => {
+    document.querySelectorAll('label, legend, [data-filldesk-question], .label, .question, .ashby-application-form-question-title, [class*="question-title"], [class*="field-label"], [class*="marginY"], [class*="question-container"], [class*="form-group"]').forEach((el) => {
       if (el.closest('input[type=file]') || el.querySelector('input[type=file]')) return;
-      push(textOf(el));
+      const titleEl = el.querySelector('h1,h2,h3,h4,h5,h6,p,strong,b') || el;
+      push(textOf(titleEl));
     });
+    for (const entry of fieldElements()) {
+      const desc = describe(entry);
+      if (desc.groupLabel) push(desc.groupLabel);
+      if (desc.legend) push(desc.legend);
+      if (desc.label && desc.label !== 'Yes' && desc.label !== 'No') push(desc.label);
+    }
     document.querySelectorAll('input:not([type=file]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select').forEach((el) => {
       const l = labelText(el);
       push(l.label || l.legend || l.section);

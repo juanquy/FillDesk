@@ -76,7 +76,9 @@ def profile_brief(profile: dict, limit: int = 9000) -> str:
         if not isinstance(exp, dict) or not (exp.get("company") or exp.get("title")):
             continue
         span = f"{exp.get('start','?')} - {exp.get('end') or ('Present' if exp.get('current') else '?')}"
-        a(f"  * {exp.get('title')} @ {exp.get('company')} ({span}) {exp.get('location','')}")
+        c_ph = exp.get("company_phone") or exp.get("phone")
+        ph_str = f" Phone: {c_ph}" if c_ph else ""
+        a(f"  * {exp.get('title')} @ {exp.get('company')} ({span}) {exp.get('location','')}{ph_str}")
         if exp.get("context"):
             a(f"      context: {exp['context']}")
         for b in experience_bullets(exp)[:12]:
@@ -90,6 +92,18 @@ def profile_brief(profile: dict, limit: int = 9000) -> str:
     for prj in profile.get("projects", []):
         if isinstance(prj, dict) and prj.get("name"):
             a(f"PROJECT: {prj['name']} - {prj.get('description','')}")
+    if profile.get("references"):
+        a("\nREFERENCES:")
+        for r in profile["references"]:
+            if isinstance(r, dict) and (r.get("name") or r.get("company")):
+                name = r.get("name") or f"{r.get('first_name','')} {r.get('last_name','')}".strip()
+                title = r.get("title") or r.get("position") or ""
+                comp = r.get("company") or ""
+                email = r.get("email") or ""
+                ph = r.get("phone") or ""
+                rel = r.get("relationship") or ""
+                desc_str = f" ({title} at {comp})" if (title or comp) else ""
+                a(f"  * {name}{desc_str} - Email: {email}, Phone: {ph}" + (f", Relationship: {rel}" if rel else ""))
     has_boiler = [b for b in profile.get("boilerplate", []) if isinstance(b, dict) and (b.get("text") or "").strip()]
     if has_boiler:
         a("\nYOUR OWN REUSABLE ANSWERS (prefer these verbatim where they fit):")
@@ -438,6 +452,29 @@ def draft_answer_with_rules(question: str, profile: dict, job: dict, keywords: l
 
     if review and review["category"] == "salary" and profile.get("salary_expectation"):
         return {"answer": str(profile["salary_expectation"]), "source": "profile", "confidence": 0.6, "needs_input": True, "blocked": False, "review": review, "note": "From your profile's salary expectation — verify it for this level and market."}
+
+    if (intent(question) == "references" or (review and review.get("category") == "references")) and profile.get("references"):
+        ref_lines = []
+        for r in profile["references"]:
+            if isinstance(r, dict) and (r.get("name") or r.get("company")):
+                name = r.get("name") or f"{r.get('first_name','')} {r.get('last_name','')}".strip()
+                title = r.get("title") or r.get("position") or ""
+                comp = r.get("company") or ""
+                email = r.get("email") or ""
+                ph = r.get("phone") or ""
+                rel = r.get("relationship") or ""
+                desc_str = f" ({title} at {comp})" if (title or comp) else ""
+                ref_lines.append(f"{name}{desc_str} - Email: {email}, Phone: {ph}" + (f", Relationship: {rel}" if rel else ""))
+        if ref_lines:
+            return {
+                "answer": "\n".join(ref_lines),
+                "source": "profile",
+                "confidence": 0.85,
+                "needs_input": False,
+                "blocked": False,
+                "note": "Drafted from your saved professional references in profile.",
+                **({"review": review} if review else {}),
+            }
 
     exp = [e for e in profile.get("experience", []) if isinstance(e, dict) and experience_bullets(e)]
     relevant = []
@@ -885,9 +922,12 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
     exp = []
     for e in profile.get("experience", []):
         if isinstance(e, dict) and (e.get("company") or e.get("title")):
+            c_phone = e.get("company_phone") or e.get("phone", "")
             exp.append(
                 {
                     "company": e.get("company", ""),
+                    "company_phone": c_phone,
+                    "phone": c_phone,
                     "title": e.get("title", ""),
                     "location": e.get("location", ""),
                     "start": e.get("start", ""),
@@ -895,6 +935,22 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
                     "bullets": experience_bullets(e),
                 }
             )
+    refs = []
+    for r in profile.get("references", []):
+        if isinstance(r, dict) and (r.get("name") or r.get("email") or r.get("company")):
+            name = (r.get("name") or "").strip()
+            first = r.get("first_name") or (name.split(" ")[0] if name else "")
+            last = r.get("last_name") or (" ".join(name.split(" ")[1:]) if name else "")
+            refs.append({
+                "name": name or f"{first} {last}".strip(),
+                "first_name": first,
+                "last_name": last,
+                "title": r.get("title") or r.get("position") or "",
+                "company": r.get("company") or "",
+                "email": r.get("email") or "",
+                "phone": r.get("phone") or "",
+                "relationship": r.get("relationship") or "",
+            })
     edu = []
     for e in profile.get("education", []):
         if isinstance(e, dict) and (e.get("school") or e.get("degree")):
@@ -993,6 +1049,7 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
         "summary": profile.get("summary", ""),
         "experience": exp,
         "education": edu,
+        "references": refs,
         "answers": answers,
         "work_authorization": wa_info,
         "review_only": {

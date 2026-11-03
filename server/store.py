@@ -143,6 +143,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
         {
             "id": "exp_1",
             "company": "",
+            "company_phone": "",
             "title": "",
             "location": "",
             "start": "",         # "2021-06" or "June 2021"
@@ -160,6 +161,9 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "projects": [
         {"id": "prj_1", "name": "", "description": "", "link": "", "bullets": []}
     ],
+    "references": [
+        # {"id": "ref_1", "name": "", "first_name": "", "last_name": "", "title": "", "company": "", "email": "", "phone": "", "relationship": ""}
+    ],
     "boilerplate": [],
     "master_resume_markdown": "",   # your canonical resume as markdown; the source of truth
     "extras": {},                   # anything else: clearance, driving license, etc.
@@ -175,7 +179,7 @@ def load_profile() -> dict:
         return p
     merged = json.loads(json.dumps(DEFAULT_PROFILE))
     for k, v in stored.items():
-        if k in ("experience", "education", "projects", "boilerplate"):
+        if k in ("experience", "education", "projects", "boilerplate", "references"):
             if isinstance(v, list) and v:
                 merged[k] = v
         else:
@@ -299,7 +303,7 @@ def replace_profile(profile: dict) -> dict:
     back up data/profile.json first; save_profile() is the normal path."""
     merged = json.loads(json.dumps(DEFAULT_PROFILE))
     for k, v in (profile or {}).items():
-        if k in ("experience", "education", "projects", "boilerplate"):
+        if k in ("experience", "education", "projects", "boilerplate", "references"):
             if isinstance(v, list) and v:
                 merged[k] = v
         else:

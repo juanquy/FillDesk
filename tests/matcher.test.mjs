@@ -789,3 +789,95 @@ test('Ashby autofill widget is ignored and checkbox option matching works', () =
   assert.equal(rAuth.action, 'fill');
   assert.equal(rAuth.value, 'Yes');
 });
+
+test('Company phone and professional references match correctly', () => {
+  const snap = JSON.parse(JSON.stringify(SNAP));
+  snap.experience = [
+    {
+      company: 'TechCorp',
+      company_phone: '555-888-9999',
+      title: 'Engineer',
+      start: '2020-01',
+      end: '2022-01',
+    },
+    {
+      company: 'OldCorp',
+      company_phone: '555-777-6666',
+      title: 'Analyst',
+      start: '2018-01',
+      end: '2020-01',
+    },
+  ];
+  snap.references = [
+    {
+      name: 'Alice Smith',
+      first_name: 'Alice',
+      last_name: 'Smith',
+      title: 'VP of Engineering',
+      company: 'TechCorp',
+      email: 'alice@example.com',
+      phone: '555-111-2222',
+      relationship: 'Former Manager',
+    },
+    {
+      name: 'Bob Jones',
+      first_name: 'Bob',
+      last_name: 'Jones',
+      title: 'Lead Architect',
+      company: 'PartnerCorp',
+      email: 'bob@example.com',
+      phone: '555-333-4444',
+      relationship: 'Former Colleague',
+    },
+  ];
+
+  // 1. Company phone on employment history
+  const fCompPhone = f({ label: 'Employer phone number', type: 'text', tag: 'input', index: 0 });
+  const rCompPhone = M.classify(fCompPhone, snap, {});
+  assert.equal(rCompPhone.action, 'fill');
+  assert.equal(rCompPhone.value, '5558889999');
+
+  const fOldCompPhone = f({ label: 'Company phone', type: 'text', tag: 'input', index: 1 });
+  const rOldCompPhone = M.classify(fOldCompPhone, snap, {});
+  assert.equal(rOldCompPhone.action, 'fill');
+  assert.equal(rOldCompPhone.value, '5557776666');
+
+  // 2. Reference 1 fields
+  const fRef1Name = f({ label: 'Reference 1 Name', type: 'text', tag: 'input', index: 0 });
+  const rRef1Name = M.classify(fRef1Name, snap, {});
+  assert.equal(rRef1Name.action, 'fill');
+  assert.equal(rRef1Name.value, 'Alice Smith');
+
+  const fRef1Email = f({ label: 'Reference 1 Email', type: 'email', tag: 'input', index: 0 });
+  const rRef1Email = M.classify(fRef1Email, snap, {});
+  assert.equal(rRef1Email.action, 'fill');
+  assert.equal(rRef1Email.value, 'alice@example.com');
+
+  const fRef1Phone = f({ label: 'Reference 1 Phone', type: 'tel', tag: 'input', index: 0 });
+  const rRef1Phone = M.classify(fRef1Phone, snap, {});
+  assert.equal(rRef1Phone.action, 'fill');
+  assert.equal(rRef1Phone.value, '5551112222');
+
+  const fRef1Company = f({ label: 'Reference 1 Company', type: 'text', tag: 'input', index: 0 });
+  const rRef1Company = M.classify(fRef1Company, snap, {});
+  assert.equal(rRef1Company.action, 'fill');
+  assert.equal(rRef1Company.value, 'TechCorp');
+
+  const fRef1Rel = f({ label: 'Reference 1 Relationship', type: 'text', tag: 'input', index: 0 });
+  const rRef1Rel = M.classify(fRef1Rel, snap, {});
+  assert.equal(rRef1Rel.action, 'fill');
+  assert.equal(rRef1Rel.value, 'Former Manager');
+
+  // 3. Reference 2 fields
+  const fRef2Name = f({ label: 'Reference 2 Name', type: 'text', tag: 'input', index: 1 });
+  const rRef2Name = M.classify(fRef2Name, snap, {});
+  assert.equal(rRef2Name.action, 'fill');
+  assert.equal(rRef2Name.value, 'Bob Jones');
+
+  // 4. Reference textarea summary
+  const fRefSummary = f({ label: 'Professional References', type: 'textarea', tag: 'textarea' });
+  const rRefSummary = M.classify(fRefSummary, snap, {});
+  assert.equal(rRefSummary.action, 'fill');
+  assert.ok(rRefSummary.value.includes('Alice Smith'));
+  assert.ok(rRefSummary.value.includes('Bob Jones'));
+});

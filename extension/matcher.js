@@ -55,6 +55,17 @@
   // ------------------------------------------------------------------ structural rules
   // Each rule: key, test on the combined signal, plus optional element-type constraint.
   const RULES = [
+    // -- references & employer contacts (must precede personal identity so "reference email" is not candidate email)
+    { key: 'ref.first_name', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*(?:first\s*name|given\s*name)/ },
+    { key: 'ref.last_name', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*(?:last\s*name|family\s*name|surname)/ },
+    { key: 'ref.name', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*(?:full\s*)?name\b|(?:name\s*of\s*(?:the\s*)?(?:reference|referee))/ },
+    { key: 'ref.email', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*e-?mail\b/ },
+    { key: 'ref.phone', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*(?:phone|mobile|tel|contact(?:\s*number)?)\b/ },
+    { key: 'ref.company', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*(?:company|organization|organisation|employer|workplace)\b/ },
+    { key: 'ref.title', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*(?:title|position|role|designation)\b/ },
+    { key: 'ref.relationship', rx: /(?:reference|referee)\s*(?:[1-9]|one|two|three)?\s*relationship\b|(?:relationship\s*to\s*(?:the\s*)?(?:reference|referee))/ },
+    { key: 'exp.phone', rx: /(employer|company|organization|supervisor)\s*(phone|telephone|contact|mobile|number)|phone\s*(number)?\s*of\s*(employer|company|organization|supervisor)/ },
+
     // -- autocomplete attribute is the strongest single signal when present
     { key: 'identity.first_name', rx: /given name|first name|firstname|forename/, autocomplete: ['given-name'] },
     { key: 'identity.last_name', rx: /family name|last name|surname|lastname/, autocomplete: ['family-name'] },
@@ -858,7 +869,7 @@
       const words = String(field.label || field.aria || '').split(/\s+/).filter(Boolean).length;
       if (words > 9) return false;
       return RULES.some((rule) => {
-        if (!/^(identity|review|misc)\./.test(rule.key)) return false;
+        if (!/^(identity|review|misc|ref)\./.test(rule.key)) return false;
         if (rule.requires === 'date' && !looksLikeDate(field)) return false;
         if (rule.requires === 'employment') return false;
         return rule.rx.test(n);
@@ -973,6 +984,9 @@
         } else if (sub === 'end_year') {
           const d = parseDate(e.end);
           value = (d && d.y) ? String(d.y) : '';
+        } else if (sub === 'phone' || sub === 'company_phone') {
+          value = digits(e.company_phone || e.phone || '');
+          out.context = 'exp.phone';
         } else {
           value = String(e[sub] || '');
           if (sub === 'end' && (e.end || '').match(/present|current/i)) value = '';
@@ -1025,8 +1039,27 @@
         } else {
           value = combined.length > String(e.degree || '').length + 1 ? combined : String(e.degree || '');
         }
+      } else if (chosen.key.indexOf('ref.') === 0) {
+        const sub = chosen.key.slice(4);
+        const idx = field.index || 0;
+        const r = ((snap.references || [])[idx]) || (snap.references || [])[0] || {};
+        if (sub === 'first_name') value = r.first_name || (r.name ? r.name.split(' ')[0] : '');
+        else if (sub === 'last_name') value = r.last_name || (r.name ? r.name.split(' ').slice(1).join(' ') : '');
+        else if (sub === 'name') value = r.name || `${r.first_name || ''} ${r.last_name || ''}`.trim();
+        else if (sub === 'email') value = r.email || '';
+        else if (sub === 'phone') value = digits(r.phone || '');
+        else if (sub === 'company') value = r.company || '';
+        else if (sub === 'title') value = r.title || r.position || '';
+        else if (sub === 'relationship') value = r.relationship || '';
       } else if (chosen.key.indexOf('review.') === 0 || chosen.key.indexOf('misc.') === 0) {
         value = answerForKey(chosen.key, snap);
+        if (chosen.key === 'review.references' && (snap.references || []).length) {
+          value = (snap.references || []).map((r) => {
+            const name = r.name || `${r.first_name || ''} ${r.last_name || ''}`.trim();
+            const desc = (r.title || r.company) ? ` (${[r.title, r.company].filter(Boolean).join(' at ')})` : '';
+            return `${name}${desc} - Email: ${r.email || ''}, Phone: ${r.phone || ''}` + (r.relationship ? `, Relationship: ${r.relationship}` : '');
+          }).join('\n\n');
+        }
         if (chosen.key === 'misc.currently_employed') {
           const latest = (snap.experience || [])[0] || {};
           value = latest.current ? 'yes' : 'no';
@@ -1074,7 +1107,13 @@
       } else if (chosen.key === 'identity.location') {
         value = resolve('identity.location', snap);
       } else if (chosen.key === 'identity.phone') {
-        value = digits(resolve('identity.phone', snap));
+        const rawPhone = resolve('identity.phone', snap);
+        value = digits(rawPhone);
+        if (value.startsWith('+1') && value.length === 12) {
+          if (field.placeholder && !field.placeholder.includes('+')) value = value.slice(2);
+        } else if (value.startsWith('1') && value.length === 11) {
+          if (field.placeholder && !field.placeholder.includes('+')) value = value.slice(1);
+        }
       } else if (chosen.key.indexOf('links.') === 0) {
         value = resolve(chosen.key, snap);
         if (!value) {
