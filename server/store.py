@@ -153,6 +153,10 @@ DEFAULT_PROFILE: dict[str, Any] = {
             "bullets": [],
             "tech": [],
             "keywords": [],
+            "ref_name": "",
+            "ref_last_name": "",
+            "ref_phone": "",
+            "ref_email": "",
         }
     ],
     "education": [

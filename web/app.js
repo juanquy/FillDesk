@@ -215,10 +215,11 @@ function itemCard(host, item, fields, defaults) {
     // The picker marker has to land INSIDE the control tag: sitting it outside the
     // branch puts the attribute in the markup as loose text and no button ever binds.
     const cal = f.cal ? ` data-cal="${f.cal}"` : '';
+    const heading = f.section ? `<div class="row" style="grid-column: 1 / -1; margin-top: 14px; margin-bottom: 2px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); font-weight: 600; font-size: 13px; color: #94a3b8;">${esc(f.section)}</div>` : '';
     const control = f.multiline
       ? `<textarea data-k="${f.key}"${cal} rows="4" class="${f.key === 'bullets' ? 'mono' : ''}" placeholder="${esc(f.ph || '')}">${esc(f.key === 'bullets' ? (item[f.key] || []).join('\n') : item[f.key] || '')}</textarea>`
       : `<input data-k="${f.key}"${cal} value="${esc(item[f.key] || '')}" placeholder="${esc(f.ph || '')}">`;
-    return `
+    return `${heading}
     <div class="row" data-field="${f.key}"><label>${esc(f.label)}</label>
       ${control}
     </div>`;
@@ -255,6 +256,11 @@ const EXP_FIELDS = [
   { key: 'context', label: 'What the company/product does', multiline: true, ph: 'One line so the writer understands the scope.' },
   { key: 'bullets', label: 'Achievements (one per line — keep the numbers)', multiline: true, ph: 'Rebuilt checkout → +23% paid conversion' },
   { key: 'tech', label: 'Tools / tech used here (comma separated)', list: true },
+  { key: 'company_phone', label: 'Company phone', ph: '(555) 123-4567' },
+  { key: 'ref_name', label: 'Reference Name', ph: 'First name', section: 'References for this role' },
+  { key: 'ref_last_name', label: 'Reference LastName', ph: 'Last name' },
+  { key: 'ref_phone', label: 'Reference Phone number', ph: '(555) 987-6543' },
+  { key: 'ref_email', label: 'Reference Email', ph: 'name@company.com' },
 ];
 const EDU_FIELDS = [
   { key: 'school', label: 'School / Institution', ph: 'UC Berkeley' },

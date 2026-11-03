@@ -121,6 +121,8 @@ def extract_experience(members: dict[str, str]) -> list[dict]:
                         "location": pick(row, "location", "location name"),
                         "start": start, "end": end, "current": not end,
                         "context": "", "bullets": bullets[:8], "tech": [], "keywords": [],
+                        "company_phone": "",
+                        "ref_name": "", "ref_last_name": "", "ref_phone": "", "ref_email": "",
                         "notes": "imported from your LinkedIn export — check the dates"})
     return out
 

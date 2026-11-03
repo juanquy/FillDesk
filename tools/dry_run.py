@@ -432,6 +432,8 @@ def parse_experience(lines: list[str]) -> list[dict]:
             current = {"id": f"exp_{len(entries) + 1}", "company": company, "title": title,
                        "location": location, "start": start, "end": end, "current": is_current,
                        "context": "", "bullets": [], "tech": [], "keywords": [],
+                       "company_phone": "",
+                       "ref_name": "", "ref_last_name": "", "ref_phone": "", "ref_email": "",
                        "notes": "drafted from your resume by dry_run — check these dates"}
             entries.append(current)
             continue

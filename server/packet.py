@@ -85,6 +85,13 @@ def profile_brief(profile: dict, limit: int = 9000) -> str:
             a(f"      - {b}")
         if exp.get("tech"):
             a(f"      tech: {', '.join(exp['tech'][:20]) if isinstance(exp['tech'], list) else exp['tech']}")
+        r_name = exp.get("ref_name") or ""
+        r_last = exp.get("ref_last_name") or ""
+        r_ph = exp.get("ref_phone") or ""
+        r_em = exp.get("ref_email") or ""
+        if r_name or r_last or r_ph or r_em:
+            full_r = f"{r_name} {r_last}".strip()
+            a(f"      reference: {full_r} - Phone: {r_ph}, Email: {r_em}")
     a("\nEDUCATION:")
     for edu in profile.get("education", []):
         if isinstance(edu, dict) and (edu.get("school") or edu.get("degree")):
@@ -933,6 +940,10 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
                     "start": e.get("start", ""),
                     "end": e.get("end", "") or ("Present" if e.get("current") else ""),
                     "bullets": experience_bullets(e),
+                    "ref_name": e.get("ref_name", ""),
+                    "ref_last_name": e.get("ref_last_name", ""),
+                    "ref_phone": e.get("ref_phone", ""),
+                    "ref_email": e.get("ref_email", ""),
                 }
             )
     refs = []
@@ -951,6 +962,23 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
                 "phone": r.get("phone") or "",
                 "relationship": r.get("relationship") or "",
             })
+    for e in profile.get("experience", []):
+        if isinstance(e, dict) and (e.get("ref_name") or e.get("ref_email") or e.get("ref_phone")):
+            r_first = (e.get("ref_name") or "").strip()
+            r_last = (e.get("ref_last_name") or "").strip()
+            full_n = f"{r_first} {r_last}".strip() if (r_first and r_last) else (r_first or r_last)
+            comp = e.get("company", "")
+            if not any(x.get("name") == full_n and x.get("company") == comp for x in refs):
+                refs.append({
+                    "name": full_n,
+                    "first_name": r_first,
+                    "last_name": r_last,
+                    "title": f"Former Manager / Reference at {comp}" if comp else "Professional Reference",
+                    "company": comp,
+                    "email": e.get("ref_email", ""),
+                    "phone": e.get("ref_phone", ""),
+                    "relationship": f"Colleague / Manager at {comp}" if comp else "Professional Reference",
+                })
     edu = []
     for e in profile.get("education", []):
         if isinstance(e, dict) and (e.get("school") or e.get("degree")):

@@ -987,6 +987,14 @@
         } else if (sub === 'phone' || sub === 'company_phone') {
           value = digits(e.company_phone || e.phone || '');
           out.context = 'exp.phone';
+        } else if (sub === 'ref_name' || sub === 'ref_first_name') {
+          value = e.ref_name || '';
+        } else if (sub === 'ref_last_name') {
+          value = e.ref_last_name || '';
+        } else if (sub === 'ref_phone') {
+          value = digits(e.ref_phone || '');
+        } else if (sub === 'ref_email') {
+          value = e.ref_email || '';
         } else {
           value = String(e[sub] || '');
           if (sub === 'end' && (e.end || '').match(/present|current/i)) value = '';
@@ -1042,12 +1050,12 @@
       } else if (chosen.key.indexOf('ref.') === 0) {
         const sub = chosen.key.slice(4);
         const idx = field.index || 0;
-        const r = ((snap.references || [])[idx]) || (snap.references || [])[0] || {};
-        if (sub === 'first_name') value = r.first_name || (r.name ? r.name.split(' ')[0] : '');
-        else if (sub === 'last_name') value = r.last_name || (r.name ? r.name.split(' ').slice(1).join(' ') : '');
-        else if (sub === 'name') value = r.name || `${r.first_name || ''} ${r.last_name || ''}`.trim();
-        else if (sub === 'email') value = r.email || '';
-        else if (sub === 'phone') value = digits(r.phone || '');
+        const r = ((snap.references || [])[idx]) || ((snap.experience || [])[idx]) || (snap.references || [])[0] || (snap.experience || [])[0] || {};
+        if (sub === 'first_name') value = r.first_name || r.ref_name || (r.name ? r.name.split(' ')[0] : '');
+        else if (sub === 'last_name') value = r.last_name || r.ref_last_name || (r.name ? r.name.split(' ').slice(1).join(' ') : '');
+        else if (sub === 'name') value = r.name || `${r.first_name || r.ref_name || ''} ${r.last_name || r.ref_last_name || ''}`.trim();
+        else if (sub === 'email') value = r.email || r.ref_email || '';
+        else if (sub === 'phone') value = digits(r.phone || r.ref_phone || '');
         else if (sub === 'company') value = r.company || '';
         else if (sub === 'title') value = r.title || r.position || '';
         else if (sub === 'relationship') value = r.relationship || '';

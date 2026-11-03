@@ -880,4 +880,32 @@ test('Company phone and professional references match correctly', () => {
   assert.equal(rRefSummary.action, 'fill');
   assert.ok(rRefSummary.value.includes('Alice Smith'));
   assert.ok(rRefSummary.value.includes('Bob Jones'));
+
+  // 5. Fallback from experience entry reference fields when snap.references is empty
+  const expOnlySnap = JSON.parse(JSON.stringify(SNAP));
+  expOnlySnap.references = [];
+  expOnlySnap.experience = [
+    {
+      company: 'CloudWorks',
+      title: 'DevOps Lead',
+      ref_name: 'Carol',
+      ref_last_name: 'Danvers',
+      ref_phone: '555-444-5555',
+      ref_email: 'carol@cloudworks.com',
+    },
+  ];
+  const fExpRefName = f({ label: 'Reference 1 Name', type: 'text', tag: 'input', index: 0 });
+  const rExpRefName = M.classify(fExpRefName, expOnlySnap, {});
+  assert.equal(rExpRefName.action, 'fill');
+  assert.equal(rExpRefName.value, 'Carol Danvers');
+
+  const fExpRefEmail = f({ label: 'Reference 1 Email', type: 'email', tag: 'input', index: 0 });
+  const rExpRefEmail = M.classify(fExpRefEmail, expOnlySnap, {});
+  assert.equal(rExpRefEmail.action, 'fill');
+  assert.equal(rExpRefEmail.value, 'carol@cloudworks.com');
+
+  const fExpRefPhone = f({ label: 'Reference 1 Phone', type: 'tel', tag: 'input', index: 0 });
+  const rExpRefPhone = M.classify(fExpRefPhone, expOnlySnap, {});
+  assert.equal(rExpRefPhone.action, 'fill');
+  assert.equal(rExpRefPhone.value, '5554445555');
 });
