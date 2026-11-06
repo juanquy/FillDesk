@@ -202,6 +202,9 @@
       '[class*="marginY"]',
       '[data-qa*="field"]',
       '[data-automation*="field"]',
+      '[data-automation-id*="formField"]',
+      '[data-automation-id*="section"]',
+      '[data-automation-id*="composite"]',
       'fieldset',
       '.field',
       'tr',
@@ -220,6 +223,10 @@
       'label:not([class*="option"]):not([class*="choice"])',
       'h1,h2,h3,h4,h5,h6',
       '[role="heading"]',
+      '[data-automation-id*="Label" i]',
+      '[data-automation-id*="label" i]',
+      '[data-automation-id*="header" i]',
+      '[data-automation-id*="title" i]',
     ].join(',');
 
     let container = el.closest(containerSelector);
@@ -426,16 +433,19 @@
       const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
       if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue;
       if (type === 'file') {
-        // Skip ATS "Autofill from resume" / "Parse resume" widgets (e.g. Ashby, Lever, Greenhouse)
-        // Dropping a file on these triggers ATS mutations that asynchronously wipe the form.
+        // Skip ATS "Autofill from resume" / "Parse resume" widgets on complex forms with many fields
+        // (Dropping a file on these triggers ATS mutations that asynchronously wipe the form).
+        // On dedicated resume-upload steps (like Workday Step 1 or upload-only pages), do NOT skip.
+        const otherInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]), textarea, select')).filter(isVisible);
+        const isDedicatedStep = /autofillWithResume/i.test(location.href) || otherInputs.length < 2;
         const container = el.closest('div, section, fieldset, form') || el.parentElement;
         const containerText = container ? clean(container.textContent || '') : '';
-        const isAutofillWidget = el.closest('[class*="autofill" i], [class*="Autofill"], [data-qa*="autofill" i]') ||
+        const isAutofillWidget = !isDedicatedStep && (el.closest('[class*="autofill" i], [class*="Autofill"], [data-qa*="autofill" i]') ||
           /\b(autofill|auto-fill|pre-fill|prefill|import|parse)\s*(?:from|with|using)?\s*(?:your\s*)?(?:resume|cv|profile|linkedin)\b/i.test(
             (el.getAttribute('aria-label') || '') + ' ' + (el.title || '') + ' ' + containerText
-          );
+          ));
         if (isAutofillWidget) continue;
-        out.push({ el, kind: 'input' });
+        out.push({ el, kind: 'input', isDedicatedUploadStep: isDedicatedStep });
         continue;
       }
       if (type === 'radio') {
@@ -547,6 +557,7 @@
       dateHint: M.dateHintFor({ placeholder: el.getAttribute('placeholder') || '', name: el.name || '', id: el.id || '' }),
       index: indexHint || 0,
       isCustomCombobox: !!entry.isCustomCombobox,
+      isDedicatedUploadStep: !!entry.isDedicatedUploadStep,
     };
   }
 
@@ -723,7 +734,22 @@
       const target = items[matchIdx].el;
       const isAlreadyChecked = target.checked || target.getAttribute('aria-pressed') === 'true';
       if (!isAlreadyChecked) {
+        if (target.focus) target.focus({ preventScroll: true });
+        if (target.tagName === 'INPUT') {
+          const proto = window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'checked');
+          if (setter && setter.set) setter.set.call(target, true);
+          else target.checked = true;
+          if (target._valueTracker && typeof target._valueTracker.setValue === 'function') {
+            target._valueTracker.setValue('');
+          }
+        }
         target.click();
+        const wrapLabel = target.closest('label') || (target.id ? document.querySelector(`label[for="${CSS.escape(target.id)}"]`) : null);
+        if (wrapLabel && wrapLabel !== target) {
+          try { wrapLabel.click(); } catch (_) {}
+        }
+        target.dispatchEvent(new Event('input', { bubbles: true }));
         target.dispatchEvent(new Event('change', { bubbles: true }));
         return true;
       }
@@ -1142,8 +1168,10 @@
     const candidates = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="submit"], input[type="button"]'));
     for (const el of candidates) {
       const text = clean(el.textContent || el.value || el.getAttribute('aria-label') || '');
-      if (M.isNextText(text) && isVisible(el)) {
-        ui.line({ kind: 'ok', text: `clicked "${text}" — navigation only, never Submit` });
+      const isWorkdayNav = el.getAttribute('data-automation-id') === 'bottom-navigation-next-button' ||
+        el.getAttribute('data-automation-id') === 'page-navigation-next-button';
+      if ((M.isNextText(text) || isWorkdayNav) && isVisible(el)) {
+        ui.line({ kind: 'ok', text: `clicked "${text || 'Continue'}" — navigation only, never Submit` });
         el.click();
         return;
       }
@@ -1885,11 +1913,13 @@
     const isApp = looksLikeApplication();
     if (isApp) {
       if (isDismissed()) return;
+      state.plan = [];
       if (!ui.isMounted()) {
         ui.mount();
         uiCheckServer();
       } else {
         ui.show();
+        preview().catch(() => {});
       }
     } else {
       if (ui.isMounted()) {

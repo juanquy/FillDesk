@@ -645,7 +645,8 @@
     const info = getWorkAuthInfo(snap);
     if (!info) return null;
 
-    const optLabels = (field.options || []).map((o) => normalizeOption(o.label));
+    const allOpts = (field.options && field.options.length) ? field.options : (field.radioLabels || []);
+    const optLabels = allOpts.map((o) => normalizeOption(o.label));
     const hasYes = optLabels.some((l) => /^(yes|y|true)\b/.test(l));
     const hasCitizenOpt = optLabels.some((l) => /\bcitizen\b/.test(l));
 
@@ -666,8 +667,8 @@
     if (/\b(are you (a )?(u\.?\s*s\.?|united states)?\s*citizen|u\.?\s*s\.?\s*citizen(ship)?|citizenship\s*(status)?|citizen of the united states)\b/i.test(n) ||
         (/(?:^|\b)citizenship(?:\s*(status|\?|:|$))/i.test(n) && !/\b(if not|unless|other than)\b/i.test(n))) {
       let val = info.is_citizen ? 'Yes' : 'No';
-      if (info.is_citizen && field.tag === 'select' && hasCitizenOpt && !hasYes) {
-        const citizenOpt = (field.options || []).find((o) => /\b(u\.?\s*s\.?|united states)?\s*citizen\b/i.test(normalizeOption(o.label)));
+      if (info.is_citizen && hasCitizenOpt && !hasYes) {
+        const citizenOpt = allOpts.find((o) => /\b(u\.?\s*s\.?|united states)?\s*citizen\b/i.test(normalizeOption(o.label)));
         val = citizenOpt ? citizenOpt.label : 'U.S. Citizen';
       }
       return {
@@ -851,6 +852,14 @@
       const q = field.label || field.legend || field.section || field.placeholder;
       const m = matchAnswer(q, snap);
       if (m.answer && m.answer.blocked) {
+        if (m.answer.category === 'work_authorization' && (!settings || settings.autofill_work_auth !== false)) {
+          const wa = classifyWorkAuth(field, n, snap);
+          if (wa) return wa;
+        }
+        if ((m.answer.category === 'protected_class' || m.answer.category === 'disability' || m.answer.category === 'veteran') && (!settings || settings.autofill_eeoc !== false)) {
+          const eeoc = classifyEEOC(field, n, snap);
+          if (eeoc) return eeoc;
+        }
         return { action: 'block', category: m.answer.category || 'compliance', reason: 'your packet marks this as a question only you may answer', confidence: 1, value: '' };
       }
       if (m.answer && m.score >= 0.6 && m.answer.answer && !m.answer.needs_input && !/\[needs input\]/i.test(m.answer.answer)) {
@@ -925,6 +934,9 @@
         if (hit) { chosen = rule; ruleAutocomplete = rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0; break; }
       }
     }
+    if (!chosen && field.isDedicatedUploadStep && (field.type === 'file' || field.tag === 'file')) {
+      chosen = { key: 'doc.resume', types: ['file', 'textarea'] };
+    }
 
     if (chosen) {
       out.key = chosen.key;
@@ -933,7 +945,7 @@
       out.review = chosen.review || null;
 
       if (chosen.key === 'doc.resume') {
-        if (/(autofill|auto-fill|pre-fill|prefill|import|parse)\s*(?:from|with|using)?\s*(?:your\s*)?(?:resume|cv)/i.test(n)) {
+        if (!field.isDedicatedUploadStep && /(autofill|auto-fill|pre-fill|prefill|import|parse)\s*(?:from|with|using)?\s*(?:your\s*)?(?:resume|cv)/i.test(n)) {
           out.action = 'skip';
           out.reason = 'ats autofill widget';
           return out;
@@ -951,8 +963,9 @@
         return out;
       }
       if (chosen.key === 'doc.cover_letter') {
-        if (field.tag === 'textarea' || field.type === 'textarea' || field.type === 'text') {
-          const letter = (snap.cover_letter || '').trim();
+        if (field.type !== 'file') {
+          const rawLetter = (typeof snap.cover_letter === 'object' ? snap.cover_letter?.text : snap.cover_letter) || '';
+          const letter = String(rawLetter || '').trim();
           out.action = letter ? 'fill' : 'skip';
           out.value = letter;
           if (!letter) out.reason = 'no cover letter in snapshot';

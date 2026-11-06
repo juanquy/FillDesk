@@ -195,6 +195,23 @@ def save_profile(patch: dict) -> dict:
     profile = load_profile()
     for k, v in (patch or {}).items():
         profile[k] = v
+    # Bidirectionally sync top-level address fields and nested address dictionary
+    addr = profile.get("address")
+    if isinstance(addr, dict) and addr:
+        for field in ("address_line1", "address_line2", "city", "state", "postal_code", "country"):
+            if field in addr and addr[field]:
+                profile[field] = addr[field]
+            elif profile.get(field) and field not in addr:
+                addr[field] = profile[field]
+    else:
+        profile["address"] = {
+            "address_line1": profile.get("address_line1", ""),
+            "address_line2": profile.get("address_line2", ""),
+            "city": profile.get("city", ""),
+            "state": profile.get("state", ""),
+            "postal_code": profile.get("postal_code", ""),
+            "country": profile.get("country", "United States"),
+        }
     profile["updated_at"] = now()
     _backup(config.PROFILE_FILE, "replace", min_gap=PROFILE_BACKUP_COOLDOWN)
     _write_json(config.PROFILE_FILE, profile)

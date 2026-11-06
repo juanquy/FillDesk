@@ -174,12 +174,12 @@ function renderProfile() {
   const set = (id, v) => { const el = $(id); if (el) el.value = v == null ? '' : v; };
   set('#p-name', p.name); set('#p-email', p.email); set('#p-phone', p.phone);
   const addr = p.address || {};
-  set('#p-addr1', addr.address_line1 || addr.line1);
-  set('#p-addr2', addr.address_line2 || addr.line2);
-  set('#p-city', addr.city);
-  set('#p-state', addr.state);
-  set('#p-postal', addr.postal_code || addr.postal);
-  set('#p-country', addr.country || 'United States');
+  set('#p-addr1', addr.address_line1 || addr.line1 || p.address_line1);
+  set('#p-addr2', addr.address_line2 || addr.line2 || p.address_line2);
+  set('#p-city', addr.city || p.city);
+  set('#p-state', addr.state || p.state);
+  set('#p-postal', addr.postal_code || addr.postal || p.postal_code);
+  set('#p-country', addr.country || p.country || 'United States');
   set('#p-location', p.location); set('#p-headline', p.headline); set('#p-pronouns', p.pronouns);
   set('#p-linkedin', (p.links || {}).linkedin); set('#p-github', (p.links || {}).github); set('#p-other', (p.links || {}).other);
   set('#p-salary', p.salary_expectation); set('#p-relocation', p.relocation);
@@ -400,20 +400,29 @@ $('#p-file').onchange = async (e) => {
 };
 
 function profileFromForm() {
+  const addr1 = ($('#p-addr1') ? $('#p-addr1').value.trim() : '');
+  const addr2 = ($('#p-addr2') ? $('#p-addr2').value.trim() : '');
   const city = ($('#p-city') ? $('#p-city').value.trim() : '');
   const state = ($('#p-state') ? $('#p-state').value.trim() : '');
+  const postal = ($('#p-postal') ? $('#p-postal').value.trim() : '');
   const country = ($('#p-country') ? $('#p-country').value.trim() : 'United States');
   const locFallback = [city, state, country].filter(Boolean).join(', ');
   const locVal = ($('#p-location') && $('#p-location').value.trim()) || locFallback;
 
   return {
     name: $('#p-name').value.trim(), email: $('#p-email').value.trim(), phone: $('#p-phone').value.trim(),
+    address_line1: addr1,
+    address_line2: addr2,
+    city: city,
+    state: state,
+    postal_code: postal,
+    country: country,
     address: {
-      address_line1: ($('#p-addr1') ? $('#p-addr1').value.trim() : ''),
-      address_line2: ($('#p-addr2') ? $('#p-addr2').value.trim() : ''),
+      address_line1: addr1,
+      address_line2: addr2,
       city: city,
       state: state,
-      postal_code: ($('#p-postal') ? $('#p-postal').value.trim() : ''),
+      postal_code: postal,
       country: country,
     },
     location: locVal, headline: $('#p-headline').value.trim(), pronouns: $('#p-pronouns').value.trim(),

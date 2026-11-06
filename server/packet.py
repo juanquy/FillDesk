@@ -438,6 +438,55 @@ def match_boilerplate(question: str, profile: dict, job: dict | None = None) -> 
     return (best, round(score, 2)) if score >= 0.45 else (None, round(score, 2))
 
 
+def resolve_work_auth_answer(question: str, profile: dict) -> dict | None:
+    wa = profile.get("work_authorization") if isinstance(profile.get("work_authorization"), dict) else {}
+    status = wa.get("status") or profile.get("citizenship_status") or profile.get("work_authorization_note") or ""
+    is_citizen = wa.get("is_citizen") if "is_citizen" in wa else ("citizen" in status.lower())
+    authorized = wa.get("authorized") if "authorized" in wa else profile.get("authorized_us", True)
+    sponsor = wa.get("requires_sponsorship") if "requires_sponsorship" in wa else profile.get("requires_sponsorship", False)
+
+    q_norm = question.lower()
+    if not any(k in q_norm for k in ["authorized", "authoriz", "citizen", "sponsor", "eligib", "visa", "legal"]):
+        return None
+
+    if any(k in q_norm for k in ["citizenship elsewhere", "foreign citizenship", "dual citizenship", "other citizenship"]):
+        return {"answer": "No", "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+
+    if any(k in q_norm for k in ["are you a citizen", "are you a u.s. citizen", "are you a united states citizen", "citizenship status", "citizen of the united states"]):
+        ans = "Yes" if is_citizen else ("U.S. Citizen" if "status" in q_norm else "No")
+        return {"answer": ans, "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+
+    if any(k in q_norm for k in ["authorized to work", "legally authorized", "employment eligibility", "eligible to work", "work authorization", "authorized in the"]):
+        return {"answer": "Yes" if authorized else "No", "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+
+    if any(k in q_norm for k in ["require sponsorship", "need sponsorship", "visa sponsorship", "require visa", "sponsorship now", "sponsorship in the"]):
+        return {"answer": "Yes" if sponsor else "No", "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+
+    return None
+
+
+def resolve_eeoc_answer(question: str, profile: dict) -> dict | None:
+    eeoc = profile.get("eeoc") if isinstance(profile.get("eeoc"), dict) else {}
+    q_norm = question.lower()
+    if any(k in q_norm for k in ["gender", "sex"]) and not any(k in q_norm for k in ["orientation", "sexual"]):
+        ans = eeoc.get("gender") or profile.get("gender")
+        if ans:
+            return {"answer": ans, "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+    if any(k in q_norm for k in ["race", "ethnicity", "ethnic"]):
+        ans = eeoc.get("race")
+        if ans:
+            return {"answer": ans, "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+    if any(k in q_norm for k in ["veteran", "military", "armed forces"]):
+        ans = eeoc.get("veteran")
+        if ans:
+            return {"answer": ans, "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+    if any(k in q_norm for k in ["disability", "handicap", "impairment"]):
+        ans = eeoc.get("disability")
+        if ans:
+            return {"answer": ans, "source": "profile", "confidence": 1.0, "needs_input": False, "blocked": False}
+    return None
+
+
 def draft_answer_with_rules(question: str, profile: dict, job: dict, keywords: list[str]) -> dict:
     blocked = sensitive.blocked_reason(question)
     if blocked:
@@ -546,15 +595,22 @@ def build_with_rules(profile: dict, job: dict, questions: list[str]) -> dict:
 SYSTEM = """You are an expert resume writer and application strategist writing on behalf of a real job seeker.
 
 ABSOLUTE RULES
-1. NEVER invent an employer, job title, date, credential, metric, award, technology, or achievement that is not in the candidate profile. A blank beats a fabrication.
-2. When something is required but absent from the profile, write the literal token [NEEDS INPUT] where the gap is, and set needs_input true for that answer.
-3. You may re-word, re-order, re-emphasise, and re-frame what the profile states. You may not add facts.
-4. Never use em-dash-heavy AI phrasing, "I am excited", "leverage", "spearhead", "results-driven", or adjective stacking. Write like a competent human: plain verbs, concrete nouns, numbers where the profile has them.
-5. Compliance questions (race, ethnicity, gender, religion, sexual orientation, disability, veteran status, work authorization, citizenship, sponsorship, age/date of birth, arrests or convictions, any attestation or signature) must NOT be drafted. Return blocked=true and an empty answer for those, whatever else the user asks.
-6. Cover letter: 180-260 words, addressed to the company by name, opening line specific and true, two evidence points drawn verbatim-in-fact from the profile, no preamble, no "Dear Hiring Manager" unless the company is unknown. Sign off with the candidate's actual full name.
-7. Resume: single column, markdown, one page (~450-550 words), top header MUST be # {candidate's actual full name from profile}, followed by ## Summary, ## Experience, ## Skills, ## Education. Never write the literal placeholder word "NAME". Keep every claim traceable to the profile.
-8. Answers to employer questions: 60-140 words each unless the question clearly wants a number or yes/no. Answer the question that was actually asked.
-9. Never state or imply the candidate's work authorization, citizenship, visa or sponsorship status, age, date of birth, health, disability, veteran status, race, ethnicity, religion, sex, sexual orientation, marital status, criminal record, or any certification/attestation -- not even if the profile seems to imply it (a home address or a language is NOT evidence of any of these). Those statements belong to the candidate alone. If a document genuinely needs one, write [NEEDS INPUT] there instead.
+1. Base all claims on facts in the candidate profile and resume. Never invent an employer, job title, dates, or non-existent credentials.
+2. Skill, tool, platform, and experience questions:
+   - If the skill/tool/experience IS in the profile or resume: Answer affirmatively with specific evidence, citing the company/role from the profile.
+   - If the skill/tool/experience IS NOT in the profile: Do NOT write [NEEDS INPUT]. Instead, answer truthfully:
+     * For Yes/No questions: Answer "No" (confidence 1.0, needs_input=false).
+     * For numeric/years questions: Answer "0" or "0 years" (confidence 1.0, needs_input=false).
+     * For rating/proficiency questions: Answer "Beginner" / "None" or lowest option (confidence 1.0, needs_input=false).
+     * For open text questions: State honestly that the candidate has not directly used that specific platform/tool, but highlight adjacent strengths from their profile (e.g., enterprise systems, cloud infrastructure, cybersecurity, scripting) and their fast learning curve.
+3. Reserve the token [NEEDS INPUT] and needs_input=true ONLY for private personal secrets that genuinely cannot be answered (such as an unknown government ID number). Never use [NEEDS INPUT] for skill questions, experience questions, or questions answerable with No or 0.
+4. You may re-word, re-order, re-emphasise, and re-frame what the profile states. You may not add facts.
+5. Never use em-dash-heavy AI phrasing, "I am excited", "leverage", "spearhead", "results-driven", or adjective stacking. Write like a competent human: plain verbs, concrete nouns, numbers where the profile has them.
+6. Work authorization & citizenship: The candidate profile explicitly states their citizenship and work authorization status. If asked, confirm their authorized status accurately.
+7. Demographic questions (race, ethnicity, gender, sexual orientation, disability, veteran status, age/date of birth, arrests/convictions, attestations/signatures) must return blocked=true and an empty answer.
+8. Cover letter: 180-260 words, addressed to the company by name, opening line specific and true, two evidence points drawn verbatim-in-fact from the profile, no preamble, no "Dear Hiring Manager" unless the company is unknown. Sign off with the candidate's actual full name.
+9. Resume: single column, markdown, one page (~450-550 words), top header MUST be # {candidate's actual full name from profile}, followed by ## Summary, ## Experience, ## Skills, ## Education. Never write the literal placeholder word "NAME". Keep every claim traceable to the profile.
+10. Answers to employer questions: 60-140 words each unless the question clearly wants a number or yes/no. Answer the question that was actually asked.
 
 Return ONLY a JSON object, no prose, matching exactly:
 {
@@ -1009,12 +1065,13 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
     }
 
     # Split address or parse from profile.location
-    addr_line1 = profile.get("address_line1") or ""
-    addr_line2 = profile.get("address_line2") or ""
-    city = profile.get("city") or ""
-    state = profile.get("state") or ""
-    postal = profile.get("postal_code") or ""
-    country = profile.get("country") or "United States"
+    addr_obj = profile.get("address") if isinstance(profile.get("address"), dict) else {}
+    addr_line1 = addr_obj.get("address_line1") or addr_obj.get("line1") or profile.get("address_line1") or ""
+    addr_line2 = addr_obj.get("address_line2") or addr_obj.get("line2") or profile.get("address_line2") or ""
+    city = addr_obj.get("city") or profile.get("city") or ""
+    state = addr_obj.get("state") or profile.get("state") or ""
+    postal = addr_obj.get("postal_code") or addr_obj.get("postal") or profile.get("postal_code") or ""
+    country = addr_obj.get("country") or profile.get("country") or "United States"
     if not (city and state) and profile.get("location"):
         parts = [p.strip() for p in profile["location"].split(",") if p.strip()]
         if len(parts) >= 2:
