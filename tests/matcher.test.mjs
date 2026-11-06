@@ -909,3 +909,56 @@ test('Company phone and professional references match correctly', () => {
   assert.equal(rExpRefPhone.action, 'fill');
   assert.equal(rExpRefPhone.value, '5554445555');
 });
+
+test('Workday multi-step application fields: Step 2 info and Step 3 experience 2', () => {
+  const snap = JSON.parse(JSON.stringify(SNAP));
+
+  // Step 2 Information fields
+  const fDeviceType = f({ label: 'Phone Device Type *', type: 'select', tag: 'select' });
+  const rDeviceType = M.classify(fDeviceType, snap, {});
+  assert.equal(rDeviceType.action, 'fill');
+  assert.equal(rDeviceType.key, 'identity.phone_device_type');
+  assert.equal(rDeviceType.value, 'Mobile');
+
+  const fPhoneExt = f({ label: 'Phone Extension', type: 'text', tag: 'input' });
+  const rPhoneExt = M.classify(fPhoneExt, snap, {});
+  assert.equal(rPhoneExt.action, 'skip');
+  assert.equal(rPhoneExt.key, 'identity.phone_extension');
+
+  const fSuffix = f({ label: 'Suffix', type: 'select', tag: 'select', options: [{ label: 'None', value: 'none' }, { label: 'Jr', value: 'jr' }] });
+  const rSuffix = M.classify(fSuffix, snap, {});
+  assert.equal(rSuffix.action, 'fill');
+  assert.equal(rSuffix.key, 'identity.suffix');
+  assert.equal(rSuffix.value, 'None');
+
+  const fPrevWorked = f({ label: 'Have you previously worked for ODFL? *', type: 'radio', kind: 'radio' });
+  const rPrevWorked = M.classify(fPrevWorked, snap, {});
+  assert.equal(rPrevWorked.action, 'fill');
+  assert.equal(rPrevWorked.key, 'misc.previous_employee');
+  assert.equal(rPrevWorked.value, 'No');
+
+  // Step 3 Experience 2 fields (index: 1)
+  const fExp2Title = f({ label: 'Job Title *', type: 'text', tag: 'input', index: 1 });
+  const rExp2Title = M.classify(fExp2Title, snap, {});
+  assert.equal(rExp2Title.action, 'fill');
+  assert.equal(rExp2Title.key, 'exp.title');
+  assert.equal(rExp2Title.value, 'Product Manager');
+
+  const fExp2Company = f({ label: 'Company *', type: 'text', tag: 'input', index: 1 });
+  const rExp2Company = M.classify(fExp2Company, snap, {});
+  assert.equal(rExp2Company.action, 'fill');
+  assert.equal(rExp2Company.key, 'exp.company');
+  assert.equal(rExp2Company.value, 'Dropbox');
+
+  const fExp2Loc = f({ label: 'Location *', type: 'text', tag: 'input', index: 1, section: 'Employment history' });
+  const rExp2Loc = M.classify(fExp2Loc, snap, {});
+  assert.equal(rExp2Loc.action, 'fill');
+  assert.equal(rExp2Loc.key, 'exp.location');
+  assert.equal(rExp2Loc.value, 'SF');
+
+  const fExp2Desc = f({ label: 'Role Description *', type: 'textarea', tag: 'textarea', index: 1 });
+  const rExp2Desc = M.classify(fExp2Desc, snap, {});
+  assert.equal(rExp2Desc.action, 'fill');
+  assert.equal(rExp2Desc.key, 'exp.description');
+  assert.equal(rExp2Desc.value, '• -40% tickets');
+});

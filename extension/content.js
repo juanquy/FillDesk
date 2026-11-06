@@ -406,7 +406,7 @@
   }
 
   function fieldElements() {
-    const nodes = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="textbox"]'));
+    const nodes = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="textbox"], button[aria-haspopup="listbox"], button[aria-haspopup="dialog"], button[data-automation-id*="prompt" i], button[data-automation-id*="select" i]'));
     const out = [];
     const seenRadioGroups = new Set();
     const handledContainers = new Set();
@@ -431,6 +431,15 @@
       if (inHandled) continue;
 
       const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
+      const isCombobox = el.getAttribute('role') === 'combobox' ||
+        el.getAttribute('aria-haspopup') === 'listbox' ||
+        el.getAttribute('aria-haspopup') === 'dialog' ||
+        el.getAttribute('data-automation-id') === 'promptOption' ||
+        (el.tagName === 'BUTTON' && (el.getAttribute('aria-expanded') != null || el.getAttribute('data-automation-id') === 'promptOption') && (el.closest('[class*="select" i]') || el.closest('[data-automation-id*="formField" i]') || el.getAttribute('aria-haspopup')));
+      if (isCombobox) {
+        out.push({ el, kind: 'select', isCustomCombobox: true });
+        continue;
+      }
       if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue;
       if (type === 'file') {
         // Skip ATS "Autofill from resume" / "Parse resume" widgets on complex forms with many fields
@@ -470,13 +479,6 @@
         }
       }
       if (type === 'checkbox') { out.push({ el, kind: 'checkbox' }); continue; }
-      const isCombobox = el.getAttribute('role') === 'combobox' ||
-        el.getAttribute('aria-haspopup') === 'listbox' ||
-        (el.tagName === 'BUTTON' && el.getAttribute('aria-expanded') != null && el.closest('[class*="select" i]'));
-      if (isCombobox) {
-        out.push({ el, kind: 'select', isCustomCombobox: true });
-        continue;
-      }
       if (el.tagName === 'SELECT') { out.push({ el, kind: 'select' }); continue; }
       if (el.tagName === 'TEXTAREA') { out.push({ el, kind: 'textarea' }); continue; }
       if (el.tagName === 'INPUT') { out.push({ el, kind: 'input' }); continue; }
@@ -577,17 +579,54 @@
     return radio.value || '';
   }
 
+  function findCardIndex(el) {
+    if (!el) return null;
+    let cur = el;
+    while (cur && cur !== document.body) {
+      const aria = (cur.getAttribute && (cur.getAttribute('aria-label') || cur.getAttribute('data-automation-id') || '')) || '';
+      const ariaMatch = aria.match(/(?:work\s*experience|employment|job|education)\s*(\d+)/i);
+      if (ariaMatch) return parseInt(ariaMatch[1], 10) - 1;
+
+      if (cur.matches && cur.matches('fieldset, [class*="card" i], [class*="section" i], [data-automation-id*="section" i], [data-automation-id*="formField" i]')) {
+        const heading = cur.querySelector('h1, h2, h3, h4, h5, legend, [data-automation-id*="header" i], [data-automation-id*="title" i]');
+        if (heading) {
+          const ht = (heading.innerText || heading.textContent || '').trim();
+          const hm = ht.match(/(?:work\s*experience|employment|job|education)\s*(\d+)/i);
+          if (hm) return parseInt(hm[1], 10) - 1;
+        }
+      }
+
+      let prev = cur.previousElementSibling;
+      while (prev) {
+        if (prev.matches && prev.matches('h1, h2, h3, h4, h5, [class*="header" i], [data-automation-id*="header" i]')) {
+          const pt = (prev.innerText || prev.textContent || '').trim();
+          const pm = pt.match(/(?:work\s*experience|employment|job|education)\s*(\d+)/i);
+          if (pm) return parseInt(pm[1], 10) - 1;
+        }
+        prev = prev.previousElementSibling;
+      }
+
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
   // ---------------------------------------------------------------- scanning
   function scan() {
     const counters = {};
     const out = [];
     for (const entry of fieldElements()) {
-      const desc = describe(entry, 0);
+      const cardIdx = findCardIndex(entry.el);
+      const desc = describe(entry, cardIdx ?? 0);
       const probe = M.classify(desc, state.snapshot || emptySnap(), state.settings);
       if (probe.key && /^(exp|edu|ref)\./.test(probe.key)) {
-        const bucket = probe.key.split('.')[1];
-        desc.index = counters[bucket] || 0;
-        counters[bucket] = desc.index + 1;
+        if (cardIdx != null) {
+          desc.index = cardIdx;
+        } else {
+          const bucket = probe.key.split('.')[1];
+          desc.index = counters[bucket] || 0;
+          counters[bucket] = desc.index + 1;
+        }
         out.push({ desc, decision: M.classify(desc, state.snapshot || emptySnap(), state.settings) });
       } else {
         out.push({ desc, decision: probe });
@@ -686,10 +725,19 @@
     if (!container) {
       container = el.closest('[class*="select"], [class*="Select"], [class*="dropdown"]') || document.body;
     }
-    const optionSelector = '[role="option"], [role="menuitem"], [data-testid*="option"], [class*="option-item"], [class*="SelectOption"], li[data-value], li[role="option"]';
+    const optionSelector = '[data-automation-id="menuItem"], [data-automation-id="promptOption"], [data-automation-id*="option" i], [role="option"], [role="menuitem"], [data-testid*="option"], [class*="option-item"], [class*="SelectOption"], li[data-value], li[role="option"]';
     let optionEls = Array.from(document.querySelectorAll(optionSelector)).filter(isVisible);
     if (!optionEls.length && container) {
       optionEls = Array.from(container.querySelectorAll(optionSelector));
+    }
+    if (!optionEls.length) {
+      const searchBox = document.querySelector('[data-automation-id="searchBox"], [data-automation-id*="search" i], input[type="search"]');
+      if (searchBox && isVisible(searchBox)) {
+        setNativeValue(searchBox, value);
+        searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(300);
+        optionEls = Array.from(document.querySelectorAll(optionSelector)).filter(isVisible);
+      }
     }
     if (!optionEls.length) {
       const listbox = document.querySelector('[role="listbox"], [role="menu"], [class*="SelectMenu"], [class*="popover"]');
@@ -898,7 +946,7 @@
   async function run() {
     if (state.running) return;
     await ensureSnapshot();
-    if (!state.plan.length) await preview();
+    if (!state.plan.length || state.plan.some((item) => item.desc && item.desc.el && !item.desc.el.isConnected)) await preview();
     state.running = true;
     state.cancelled = false;
     state.reached = 0;
@@ -1323,6 +1371,7 @@
 
   async function prepareAndFill() {
     if (state.running) return;
+    state.plan = [];
     ui.setHeader('analyzing job…', true);
     ui.line({ kind: 'ok', text: '1/3 analyzing job description on this page…' });
 
@@ -1360,6 +1409,7 @@
 
   async function quickFillProfile() {
     if (state.running) return;
+    state.plan = [];
     ui.setHeader('loading profile…', true);
     try {
       state.snapshot = await api('/api/autofill/snapshot?source=profile&host=' + encodeURIComponent(location.hostname));
@@ -1908,6 +1958,12 @@
   }
 
   let lastHref = location.href;
+  let lastStepHeader = '';
+  function currentStepHeading() {
+    const el = document.querySelector('[data-automation-id="pageHeader"], [aria-current="step"], [data-automation-id="progressBarStepActive"], [data-automation-id="subPageTitle"], h1, h2');
+    return el ? clean(el.textContent || el.innerText || '') : '';
+  }
+
   function handleNavigation() {
     if (!IS_TOP) return;
     const isApp = looksLikeApplication();
@@ -1929,10 +1985,17 @@
   }
 
   function checkNavigation() {
-    if (location.href !== lastHref) {
-      lastHref = location.href;
+    const curHref = location.href;
+    const curStep = currentStepHeading();
+    const hrefChanged = curHref !== lastHref;
+    const stepChanged = Boolean(curStep && lastStepHeader && curStep !== lastStepHeader);
+
+    if (hrefChanged || stepChanged) {
+      lastHref = curHref;
+      lastStepHeader = curStep;
       handleNavigation();
     } else if (IS_TOP && looksLikeApplication() && !isDismissed()) {
+      if (!lastStepHeader && curStep) lastStepHeader = curStep;
       ui.ensureAttached();
     }
   }

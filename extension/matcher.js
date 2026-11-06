@@ -70,8 +70,11 @@
     { key: 'identity.first_name', rx: /given name|first name|firstname|forename/, autocomplete: ['given-name'] },
     { key: 'identity.last_name', rx: /family name|last name|surname|lastname/, autocomplete: ['family-name'] },
     { key: 'identity.full_name', rx: /(?:^|\s)(full name|your name|applicant name|candidate name|name of applicant)(?:$|\s)/ },
+    { key: 'identity.suffix', rx: /\bsuffix\b/i },
     { key: 'identity.pronouns', rx: /pronoun/ },
     { key: 'identity.email', rx: /e-?mail|email address/, autocomplete: ['email'] },
+    { key: 'identity.phone_device_type', rx: /phone\s*(device\s*)?type|device\s*type/i },
+    { key: 'identity.phone_extension', rx: /\b(?:phone\s*)?ext(?:ension)?\b/i },
     { key: 'identity.phone', rx: /phone|mobile|telephone|cell(ular)? (number|phone)|contact number/, autocomplete: ['tel'] },
     { key: 'identity.location', rx: /\b(location\b|current location|where (are|do) you( currently)? (based|located|living|from)|based in|home ?town|hometown|city and state)\b/ },
     { key: 'address.line2', rx: /(?:address\s*(?:line\s*)?2|apartment|suite|\bunit\s*(?:number|#)?\b|\bapt\b)/i, autocomplete: ['address-line2'] },
@@ -93,15 +96,16 @@
     { key: 'doc.other', types: ['file'], rx: /(transcript|writing sample|portfolio (file|upload)|certification file|additional document|supporting document|attachment)/ },
 
     // -- employment history (indexed; content.js maps "current"/"most recent" to index 0)
-    { key: 'exp.company', rx: /(current|most recent|previous|present|last)\s*(employer|company|organization|organisation)|employer|company name|organization name|name of (employer|company|organization)/ },
-    { key: 'exp.title', rx: /(current|most recent|previous|present)\s*(job )?(title|position|role)|job title|position title|role title|your (job )?title|designation/ },
+    { key: 'exp.company', rx: /(?:current|most recent|previous|present|last)\s*(?:employer|company|organization|organisation)|employer|company(?:\s*name)?|organization(?:\s*name)?|name of (?:employer|company|organization)/i },
+    { key: 'exp.title', rx: /(?:current|most recent|previous|present)\s*(?:job\s*)?(?:title|position|role)|job\s*title|position\s*title|role\s*title|your\s*(?:job\s*)?title|designation|\btitle\b/i },
     { key: 'exp.start_month', rx: /\b(start|from|begin|joined)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(start|from|begin|joined)\b/, requires: 'employment' },
     { key: 'exp.start_year', rx: /\b(start|from|begin|joined)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(start|from|begin|joined)\b/, requires: 'employment' },
     { key: 'exp.start', rx: /\b(start|from|begin|joining|joined|since)\b\s*(date|month|year|mm)?/, requires: 'employment' },
     { key: 'exp.end_month', rx: /\b(end|to|until|through|leaving)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(end|to|until|through|leaving)\b/, requires: 'employment' },
     { key: 'exp.end_year', rx: /\b(end|to|until|through|leaving)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(end|to|until|through|leaving)\b/, requires: 'employment' },
     { key: 'exp.end', rx: /\b(end|to|until|through|leaving|left|terminated)\b\s*(date|month|year|mm)?/, requires: 'employment' },
-    { key: 'exp.location', rx: /(job|position|role|employer)\s*location|location of (employment|position)/, requires: 'employment' },
+    { key: 'exp.location', rx: /(?:job|position|role|employer|work|office)?\s*location\b|location of (?:employment|position)/i },
+    { key: 'exp.description', types: ['textarea', 'text'], rx: /(?:role|job|work|position|experience)?\s*description\b|responsibilities|duties|summary of duties/i },
     { key: 'exp.reason_for_leaving', rx: /reason (for|of) (leaving|separation|departure)|why (did you leave|are you leaving)/ },
 
     // -- education
@@ -129,6 +133,7 @@
 
     // -- misc common fields
     { key: 'misc.how_heard', rx: /how (did you (hear|find|learn)|about (this|the) (position|role|opening))|source of (application|awareness)|where did you hear/ },
+    { key: 'misc.previous_employee', rx: /(?:previously|prior|ever|former)\s*(?:been\s*)?(?:worked|employed|contractor|employee)|previous\s*employment\s*with|previously\s*worked\s*for/i },
     { key: 'misc.currently_employed', rx: /(currently|are you) employed|current employment status/ },
     { key: 'misc.work_model', rx: /(remote|hybrid|onsite|on-site).*(preference|option|acceptab)|preferred (work )?(model|arrangement)/, review: 'relocation' },
     { key: 'misc.availability_hours', rx: /hours per week|availability|part[- ]?time hours/ },
@@ -171,12 +176,18 @@
 
   // ------------------------------------------------------------------ value resolution
   function resolve(keyPath, snap) {
-    if (!keyPath) return '';
+    if (!keyPath || !snap) return '';
     const parts = keyPath.split('.');
     let cur = snap;
     for (const p of parts) {
-      if (cur == null) return '';
+      if (cur == null) break;
       cur = cur[p];
+    }
+    if ((cur == null || cur === '') && parts[0] === 'identity' && parts[1] && snap[parts[1]] != null) {
+      cur = snap[parts[1]];
+      if (parts[1] === 'first_name' && !cur && snap.name) cur = snap.name.split(' ')[0];
+      if (parts[1] === 'last_name' && !cur && snap.name) cur = snap.name.split(' ').slice(1).join(' ');
+      if (parts[1] === 'full_name' && !cur && snap.name) cur = snap.name;
     }
     if (cur == null) return '';
     if (Array.isArray(cur)) return cur.join(', ');
@@ -587,8 +598,8 @@
   // says so. Without this, "Earliest start date" gets filled with the first job's
   // start date -- a wrong answer that looks completely plausible.
   function employmentContext(field) {
-    const hay = norm((field.section || '') + ' ' + (field.legend || '') + ' ' + (field.groupLabel || ''));
-    return /\b(experience|employment|work history|previous (job|role|position|employer)|professional background|job history)\b/.test(hay);
+    const hay = norm((field.section || '') + ' ' + (field.legend || '') + ' ' + (field.groupLabel || '') + ' ' + (field.id || '') + ' ' + (field.name || '') + ' ' + (field.testid || ''));
+    return /\b(experience|employment|work history|previous (job|role|position|employer)|professional background|job history|workexperience)\b/i.test(hay);
   }
 
   function educationContext(field) {
@@ -878,7 +889,7 @@
       const words = String(field.label || field.aria || '').split(/\s+/).filter(Boolean).length;
       if (words > 9) return false;
       return RULES.some((rule) => {
-        if (!/^(identity|review|misc|ref)\./.test(rule.key)) return false;
+        if (!/^(identity|review|misc|ref|address|exp|edu)\./.test(rule.key)) return false;
         if (rule.requires === 'date' && !looksLikeDate(field)) return false;
         if (rule.requires === 'employment') return false;
         return rule.rx.test(n);
@@ -927,6 +938,8 @@
         if (rule.requires === 'education' && !(looksLikeDate(field) && educationContext(field))) continue;
         if (rule.types && field.tag !== 'input' && field.tag !== 'textarea' && field.tag !== 'select' && field.tag !== 'file') continue;
         if (rule.types && rule.types.indexOf(field.type) < 0 && rule.types.indexOf(field.tag) < 0) continue;
+        if (rule.key === 'identity.location' && (employmentContext(field) || (field.index && field.index > 0))) continue;
+        if (rule.key === 'exp.location' && !employmentContext(field) && !(field.index && field.index > 0) && !/(?:job|position|role|employer|work|office)\s*location/i.test(n)) continue;
         let hit = false;
         if (rule.rx.test(n)) hit = true;
         if (!hit && rule.autocomplete && field.autocomplete && rule.autocomplete.indexOf(field.autocomplete) >= 0) hit = true;
@@ -1008,6 +1021,8 @@
           value = digits(e.ref_phone || '');
         } else if (sub === 'ref_email') {
           value = e.ref_email || '';
+        } else if (sub === 'description') {
+          value = (e.bullets && e.bullets.length) ? e.bullets.map(b => '• ' + b).join('\n') : (e.description || e.summary || '');
         } else {
           value = String(e[sub] || '');
           if (sub === 'end' && (e.end || '').match(/present|current/i)) value = '';
@@ -1114,7 +1129,20 @@
           const rel = snap.preferences && snap.preferences.willing_to_relocate;
           if (rel != null && rel !== '') value = rel ? 'Yes' : 'No';
         }
+        if (chosen.key === 'misc.previous_employee') {
+          value = (snap.preferences && snap.preferences.previous_employee) || 'No';
+        }
         if (chosen.key === 'misc.preferred_name' || chosen.key === 'misc.legally_first_name') value = resolve('identity.first_name', snap);
+      } else if (chosen.key === 'identity.phone_device_type') {
+        value = (snap.identity && snap.identity.phone_device_type) || 'Mobile';
+        out.context = 'identity.phone_device_type';
+      } else if (chosen.key === 'identity.phone_extension') {
+        value = (snap.identity && snap.identity.phone_extension) || '';
+      } else if (chosen.key === 'identity.suffix') {
+        value = (snap.identity && snap.identity.suffix) || '';
+        if (!value && field.options && field.options.some((o) => /^(none|n\/?a|not applicable)$/i.test(o.label || o.value))) {
+          value = 'None';
+        }
       } else if (chosen.key.indexOf('address.') === 0) {
         const sub = chosen.key.slice(8);
         const addr = (snap.address && typeof snap.address === 'object') ? snap.address : {};
