@@ -1364,6 +1364,24 @@ class GeneratedProseIsScrubbed(unittest.TestCase):
         self.assertIn("applied_at", updated)
         call("DELETE", f"/api/jobs/{jid}")
 
+    def test_autofill_map_fields_respects_blocked_and_maps_llm(self):
+        from unittest.mock import patch
+        fields = [
+            {"id": 0, "label": "Have you used a compliance automation platform?", "type": "text", "tag": "input"},
+            {"id": 1, "label": "What is your race / ethnicity?", "type": "select", "tag": "select", "options": ["Prefer not to say"]},
+        ]
+        with patch("server.llm.status", return_value={"usable": True, "model": "mock-model"}), \
+             patch("server.llm.complete", return_value={"mappings": [
+                 {"id": 0, "action": "fill", "value": "Yes, Vanta and Drata for SOC 2.", "confidence": 0.9},
+                 {"id": 1, "action": "fill", "value": "Prefer not to say", "confidence": 0.9},
+             ]}):
+            code, data = call("POST", "/api/autofill/map_fields", {"title": "Security Engineer", "company": "Acme", "fields": fields})
+        self.assertEqual(code, 200)
+        mappings = data.get("mappings") or {}
+        self.assertIn("0", mappings)
+        self.assertEqual(mappings["0"]["value"], "Yes, Vanta and Drata for SOC 2.")
+        self.assertNotIn("1", mappings, "blocked compliance question must never be sent to or returned by LLM mapper")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

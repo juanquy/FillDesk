@@ -13,6 +13,7 @@ Both paths enforce the same invariants, in code rather than in a prompt:
 from __future__ import annotations
 
 import difflib
+import json
 import re
 from typing import Any
 
@@ -1193,3 +1194,114 @@ def build_profile_snapshot_from_profile(profile: dict, job: dict | None = None) 
         "cover_letter": f"{cand_name}-cover-letter-{comp_name}.docx" if comp_name else f"{cand_name}-cover-letter.docx",
     }
     return snap
+
+
+MAP_FIELDS_SYSTEM = """You are FillDesk's universal form field mapper.
+Given a candidate's verified Master Profile, an optional job posting, and a list of form fields that rule-based matching could not classify, decide what value (if any) should be filled for each field.
+
+Strict rules:
+1. NEVER invent credentials, years of experience, certifications, employers, phone numbers, or legal attestations not supported by the profile.
+2. NEVER answer protected-class (race, gender, veteran, disability), criminal background, age/DOB, SSN, or legal signature/attestation fields — return "skip" for those.
+3. For optional fields that have no data in the profile (e.g. Middle Name, Alternate Phone, Preferred Name when not set, SMS marketing consent, AI opt-out checkboxes), return "skip".
+4. If a field has `options`, `value` MUST match one of the provided option strings.
+5. For open-ended screening questions (e.g. years of experience, tools used, motivation, compliance/security experience), write a concise, honest, tailored answer grounded strictly in the candidate's profile and the job posting.
+6. Return ONLY valid JSON:
+{"mappings": [{"id": 0, "action": "fill", "value": "...", "confidence": 0.9}, {"id": 1, "action": "skip"}]}"""
+
+
+def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None = None) -> dict[str, dict]:
+    """Use the configured LLM to map unrecognised form fields against the candidate profile."""
+    if not fields:
+        return {}
+    if not llm.status().get("usable"):
+        return {}
+
+    safe_fields = []
+    for f in fields[:35]:
+        label = str(f.get("label") or "").strip()
+        section = str(f.get("section") or "").strip()
+        if not label:
+            continue
+        if sensitive.blocked_reason(f"{label} {section}"):
+            continue
+        safe_fields.append({
+            "id": f.get("id"),
+            "label": label[:240],
+            "type": f.get("type") or "text",
+            "tag": f.get("tag") or "input",
+            "placeholder": str(f.get("placeholder") or "")[:120],
+            "section": section[:120],
+            "required": bool(f.get("required")),
+            "options": [str(o)[:100] for o in (f.get("options") or [])[:40]],
+        })
+    if not safe_fields:
+        return {}
+
+    addr = profile.get("address") if isinstance(profile.get("address"), dict) else {}
+    profile_summary = {
+        "name": profile.get("name", ""),
+        "email": profile.get("email", ""),
+        "phone": profile.get("phone", ""),
+        "location": profile.get("location", ""),
+        "address": addr,
+        "headline": profile.get("headline", ""),
+        "summary": profile.get("summary", ""),
+        "links": profile.get("links") or {},
+        "skills": (profile.get("skills") or [])[:40],
+        "work_authorization_note": profile.get("work_authorization_note", ""),
+        "salary_expectation": profile.get("salary_expectation", ""),
+        "relocation": profile.get("relocation", ""),
+        "notice_period": profile.get("notice_period", ""),
+        "how_heard": profile.get("how_heard", "LinkedIn"),
+        "experience": [
+            {
+                "company": e.get("company", ""),
+                "title": e.get("title", ""),
+                "location": e.get("location", ""),
+                "start": e.get("start", ""),
+                "end": e.get("end", ""),
+                "bullets": (e.get("bullets") or [])[:4],
+            }
+            for e in (profile.get("experience") or [])[:6]
+            if isinstance(e, dict)
+        ],
+        "education": profile.get("education") or [],
+    }
+    job_summary = {
+        "title": (job or {}).get("title", ""),
+        "company": (job or {}).get("company", ""),
+        "description": str((job or {}).get("description") or "")[:2500],
+    }
+
+    user_prompt = json.dumps({
+        "profile": profile_summary,
+        "job": job_summary,
+        "fields": safe_fields,
+    }, ensure_ascii=False)
+
+    try:
+        resp = llm.complete(MAP_FIELDS_SYSTEM, user_prompt, expect_json=True)
+    except Exception:  # noqa: BLE001
+        return {}
+
+    items = resp.get("mappings") if isinstance(resp, dict) else (resp if isinstance(resp, list) else [])
+    if not isinstance(items, list):
+        return {}
+
+    allowed_ids = {f["id"] for f in safe_fields}
+    out: dict[str, dict] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        fid = item.get("id")
+        if fid not in allowed_ids or item.get("action") != "fill":
+            continue
+        val = str(item.get("value") or "").strip()
+        if not val or NEEDS_INPUT_MARK in val.lower():
+            continue
+        out[str(fid)] = {
+            "action": "fill",
+            "value": val,
+            "confidence": float(item.get("confidence") or 0.8),
+        }
+    return out

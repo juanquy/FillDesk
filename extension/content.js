@@ -256,11 +256,50 @@
     return '';
   }
 
+  function parentOrHost(node) {
+    if (!node) return null;
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode && node.getRootNode();
+    return (root && root.host) ? root.host : null;
+  }
+
+  function closestDeep(el, selector) {
+    let cur = el;
+    while (cur && cur !== document) {
+      if (cur.matches && cur.matches(selector)) return cur;
+      cur = parentOrHost(cur);
+    }
+    return null;
+  }
+
+  function queryAllDeep(selector, root = document) {
+    const out = [];
+    const seen = new Set();
+    function walk(r) {
+      if (!r || !r.querySelectorAll) return;
+      for (const el of r.querySelectorAll(selector)) {
+        if (!seen.has(el)) { seen.add(el); out.push(el); }
+      }
+      for (const node of r.querySelectorAll('*')) {
+        if (node.hasAttribute && node.hasAttribute('data-filldesk-panel')) continue;
+        if (node.shadowRoot) walk(node.shadowRoot);
+      }
+    }
+    walk(root);
+    return out;
+  }
+
+  function isCookieConsentNode(el) {
+    return !!closestDeep(el, '#onetrust-pc-sdk, #onetrust-consent-sdk, .onetrust-pc-dark-filter, #CybotCookiebotDialog, [id*="cookie-banner" i], [id*="cookie-consent" i], [class*="cookie-banner" i], [class*="cookie-consent" i], [class*="cc-window" i], [role="dialog"][aria-label*="cookie" i], [role="dialog"][aria-label*="consent" i], [role="dialog"][aria-label*="privacy" i]');
+  }
+
   function labelText(el) {
     const bits = [];
+    const rootNode = (el.getRootNode && el.getRootNode()) || document;
+    const byId = (id) => (rootNode.getElementById ? rootNode.getElementById(id) : null) || document.getElementById(id);
     if (el.getAttribute('aria-labelledby')) {
       for (const id of el.getAttribute('aria-labelledby').split(/\s+/)) {
-        const ref = document.getElementById(id);
+        const ref = byId(id);
         if (ref) bits.push(textOf(ref));
       }
     }
@@ -269,12 +308,27 @@
 
     const id = el.id;
     if (id) {
-      const direct = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      const direct = (rootNode.querySelector ? rootNode.querySelector(`label[for="${CSS.escape(id)}"]`) : null) || document.querySelector(`label[for="${CSS.escape(id)}"]`);
       if (direct) bits.unshift(textOf(direct));
     }
-    const wrapping = el.closest('label');
+    const wrapping = closestDeep(el, 'label');
     if (wrapping && el.type !== 'radio' && el.type !== 'checkbox') {
       bits.unshift(clean(wrapping.textContent.replace(el.value || '', '')));
+    }
+
+    // Check shadow host attributes & slotted labels (e.g. ADP SDF, Salesforce LWC, Workday web components)
+    let hostCur = (rootNode && rootNode.host) ? rootNode.host : null;
+    for (let h = 0; h < 3 && hostCur; h++, hostCur = (hostCur.getRootNode && hostCur.getRootNode().host) || null) {
+      const hLabel = hostCur.getAttribute('label') || hostCur.getAttribute('aria-label') || hostCur.getAttribute('data-label');
+      if (hLabel) bits.push(hLabel);
+      if (hostCur.getAttribute('aria-labelledby')) {
+        for (const hid of hostCur.getAttribute('aria-labelledby').split(/\s+/)) {
+          const href = document.getElementById(hid);
+          if (href) bits.push(textOf(href));
+        }
+      }
+      const slottedLabel = hostCur.querySelector && hostCur.querySelector('label, [slot="label"], .label, [class*="label" i]');
+      if (slottedLabel) bits.push(textOf(slottedLabel));
     }
 
     const qTitle = fieldQuestionTitle(el);
@@ -290,9 +344,9 @@
       }
     }
     if (!bits.length || bits.every((b) => !b)) {
-      let parent = el.closest('td,li,.field,.form-field,.forminator-field,.wf-field,fieldset,[class*="field-entry"],[class*="form-group"]');
-      if (!parent) parent = el.parentElement;
-      for (let depth = 0; depth < 4 && parent && parent !== document.body; depth++, parent = parent.parentElement) {
+      let parent = closestDeep(el, 'td,li,.field,.form-field,.forminator-field,.wf-field,fieldset,[class*="field-entry"],[class*="form-group"]');
+      if (!parent) parent = parentOrHost(el);
+      for (let depth = 0; depth < 4 && parent && parent !== document.body; depth++, parent = parentOrHost(parent)) {
         const clone = parent.cloneNode(true);
         const stripSelector = el.type === 'file' ? 'input,textarea,select,script,style' : 'input,textarea,select,button,script,style';
         clone.querySelectorAll(stripSelector).forEach((n) => n.remove());
@@ -300,12 +354,14 @@
         if (t && t.length < 160) { bits.push(t); break; }
       }
     }
-    const legend = el.closest('fieldset') ? textOf(el.closest('fieldset').querySelector('legend')) : '';
+    const fs = closestDeep(el, 'fieldset');
+    const legend = fs ? textOf(fs.querySelector('legend')) : '';
     const heading = nearestHeading(el);
-    const placeholder = el.getAttribute('placeholder');
+    const placeholder = el.getAttribute('placeholder') || (rootNode && rootNode.host && rootNode.host.getAttribute('placeholder')) || '';
     const safePlaceholder = !isGenericPlaceholder(placeholder) ? placeholder : '';
+    const hostName = (rootNode && rootNode.host && (rootNode.host.getAttribute('name') || rootNode.host.id)) || '';
     return {
-      label: clean(bits.find(Boolean) || safePlaceholder || el.getAttribute('title') || humanize(el.name || el.id || '')),
+      label: clean(bits.find(Boolean) || safePlaceholder || el.getAttribute('title') || humanize(el.name || hostName || el.id || '')),
       legend: clean(legend),
       section: clean(heading),
     };
@@ -313,12 +369,12 @@
 
   function nearestHeading(el) {
     let node = el;
-    for (let depth = 0; depth < 8 && node; depth++) {
+    for (let depth = 0; depth < 12 && node; depth++) {
       let sib = node.previousElementSibling;
       for (let hops = 0; sib && hops < 8; hops++, sib = sib.previousElementSibling) {
         if (/^H[1-6]$/.test(sib.tagName) || sib.getAttribute('role') === 'heading') return textOf(sib);
       }
-      node = node.parentElement;
+      node = parentOrHost(node);
     }
     return '';
   }
@@ -366,33 +422,28 @@
   function isVisible(el) {
     if (!el) return false;
     if (el.type === 'hidden' || el.getAttribute('aria-hidden') === 'true') return false;
+    let anc = el;
+    while (anc && anc !== document && anc.nodeType === 1) {
+      if (anc.hasAttribute && (anc.hasAttribute('hidden') || anc.getAttribute('aria-hidden') === 'true')) return false;
+      const acs = getComputedStyle(anc);
+      if (acs.display === 'none' || acs.visibility === 'hidden') return false;
+      anc = parentOrHost(anc);
+    }
     if (el.type === 'file') {
-      const parent = el.closest('form, [data-qa], [data-automation], .upload, .dropzone, section, fieldset, main, body');
-      if (parent) {
-        const pcs = getComputedStyle(parent);
-        if (pcs.display !== 'none' && pcs.visibility !== 'hidden') return true;
-      }
-      return document.body && document.body.contains(el);
+      return Boolean(el.isConnected);
     }
     // Modern ATSs (Ashby, Greenhouse, etc.) style native radios/checkboxes with opacity: 0
     // and overlay custom SVGs or icons. Do not reject on opacity: 0 if container is visible.
     if (el.type === 'radio' || el.type === 'checkbox') {
-      const parent = el.closest('label, [class*="radio"], [class*="checkbox"], fieldset, form, section, main, body') || el.parentElement;
-      if (parent) {
-        const pcs = getComputedStyle(parent);
-        if (pcs.display === 'none' || pcs.visibility === 'hidden') return false;
-        if (parent.closest('[aria-hidden="true"],[hidden]')) return false;
-      }
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
-      if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+      const parent = closestDeep(el, 'label, [class*="radio"], [class*="checkbox"], fieldset, form, section, main') || parentOrHost(el) || el;
+      const rect = parent.getBoundingClientRect();
+      if (rect.width < 1 && rect.height < 1) return false;
       return true;
     }
     const rect = el.getBoundingClientRect();
     if (rect.width < 2 && rect.height < 2) return false;
     const cs = getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-    if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+    if (cs.opacity === '0') return false;
     return true;
   }
 
@@ -406,15 +457,15 @@
   }
 
   function fieldElements() {
-    const nodes = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="textbox"], button[aria-haspopup="listbox"], button[aria-haspopup="dialog"], button[data-automation-id*="prompt" i], button[data-automation-id*="select" i]'));
+    const nodes = queryAllDeep('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="textbox"], button[aria-haspopup="listbox"], button[aria-haspopup="dialog"], button[data-automation-id*="prompt" i], button[data-automation-id*="select" i]');
     const out = [];
     const seenRadioGroups = new Set();
     const handledContainers = new Set();
 
     // 1. Detect custom segmented controls (e.g. AshbyHQ Yes/No segmented button pairs)
-    const segmentedContainers = Array.from(document.querySelectorAll('.ashby-application-form-input-yesno, [class*="input-yesno"], [data-qa*="yesno"]'));
+    const segmentedContainers = queryAllDeep('.ashby-application-form-input-yesno, [class*="input-yesno"], [data-qa*="yesno"]');
     for (const container of segmentedContainers) {
-      if (container.closest('[data-filldesk-panel]') || container.closest('nav')) continue;
+      if (closestDeep(container, '[data-filldesk-panel]') || closestDeep(container, 'nav') || isCookieConsentNode(container)) continue;
       const buttons = Array.from(container.querySelectorAll('button[data-option], button')).filter(isVisible);
       if (buttons.length >= 2) {
         handledContainers.add(container);
@@ -423,7 +474,7 @@
     }
 
     for (const el of nodes) {
-      if (el.closest('[data-filldesk-panel]') || el.closest('nav')) continue;
+      if (closestDeep(el, '[data-filldesk-panel]') || closestDeep(el, 'nav') || isCookieConsentNode(el)) continue;
       let inHandled = false;
       for (const hc of handledContainers) {
         if (hc.contains(el)) { inHandled = true; break; }
@@ -435,7 +486,7 @@
         el.getAttribute('aria-haspopup') === 'listbox' ||
         el.getAttribute('aria-haspopup') === 'dialog' ||
         el.getAttribute('data-automation-id') === 'promptOption' ||
-        (el.tagName === 'BUTTON' && (el.getAttribute('aria-expanded') != null || el.getAttribute('data-automation-id') === 'promptOption') && (el.closest('[class*="select" i]') || el.closest('[data-automation-id*="formField" i]') || el.getAttribute('aria-haspopup')));
+        (el.tagName === 'BUTTON' && (el.getAttribute('aria-expanded') != null || el.getAttribute('data-automation-id') === 'promptOption') && (closestDeep(el, '[class*="select" i]') || closestDeep(el, '[data-automation-id*="formField" i]') || el.getAttribute('aria-haspopup')));
       if (isCombobox) {
         out.push({ el, kind: 'select', isCustomCombobox: true });
         continue;
@@ -445,11 +496,11 @@
         // Skip ATS "Autofill from resume" / "Parse resume" widgets on complex forms with many fields
         // (Dropping a file on these triggers ATS mutations that asynchronously wipe the form).
         // On dedicated resume-upload steps (like Workday Step 1 or upload-only pages), do NOT skip.
-        const otherInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]), textarea, select')).filter(isVisible);
+        const otherInputs = queryAllDeep('input:not([type=hidden]):not([type=file]), textarea, select').filter(isVisible);
         const isDedicatedStep = /autofillWithResume/i.test(location.href) || otherInputs.length < 2;
-        const container = el.closest('div, section, fieldset, form') || el.parentElement;
+        const container = closestDeep(el, 'div, section, fieldset, form') || parentOrHost(el);
         const containerText = container ? clean(container.textContent || '') : '';
-        const isAutofillWidget = !isDedicatedStep && (el.closest('[class*="autofill" i], [class*="Autofill"], [data-qa*="autofill" i]') ||
+        const isAutofillWidget = !isDedicatedStep && (closestDeep(el, '[class*="autofill" i], [class*="Autofill"], [data-qa*="autofill" i]') ||
           /\b(autofill|auto-fill|pre-fill|prefill|import|parse)\s*(?:from|with|using)?\s*(?:your\s*)?(?:resume|cv|profile|linkedin)\b/i.test(
             (el.getAttribute('aria-label') || '') + ' ' + (el.title || '') + ' ' + containerText
           ));
@@ -459,18 +510,20 @@
       }
       if (type === 'radio') {
         const name = el.name;
+        const root = (el.getRootNode && el.getRootNode()) || document;
         if (name) {
-          if (seenRadioGroups.has(name)) continue;
-          seenRadioGroups.add(name);
-          const group = Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`));
+          const groupKey = `${root === document ? 'doc' : 'sr'}:${name}`;
+          if (seenRadioGroups.has(groupKey)) continue;
+          seenRadioGroups.add(groupKey);
+          const group = Array.from(root.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`));
           out.push({ el, kind: 'radio', group });
           continue;
         } else {
-          const parentGroup = el.closest('[role="radiogroup"], fieldset, [class*="radio-group"], [class*="radiogroup"], .ashby-application-form-field-entry');
+          const parentGroup = closestDeep(el, '[role="radiogroup"], fieldset, [class*="radio-group"], [class*="radiogroup"], .ashby-application-form-field-entry');
           if (parentGroup) {
             if (handledContainers.has(parentGroup)) continue;
             handledContainers.add(parentGroup);
-            const group = Array.from(parentGroup.querySelectorAll('input[type="radio"]'));
+            const group = queryAllDeep('input[type="radio"]', parentGroup);
             out.push({ el: group[0] || el, kind: 'radio', group });
             continue;
           }
@@ -877,6 +930,69 @@
   // ---------------------------------------------------------------- actions
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  async function aiMapUnmatched(plan) {
+    if (!state.token || !Array.isArray(plan) || !plan.length) return 0;
+    const targets = [];
+    for (let idx = 0; idx < plan.length; idx++) {
+      const item = plan[idx];
+      if (!item || !item.desc || !item.decision) continue;
+      if (item.decision.action !== 'skip') continue;
+      if (!item.desc.visible || item.decision.reason === 'hidden') continue;
+      if (item.decision.unverified || item.decision.reason === 'ats autofill widget') continue;
+      if (item.desc.type === 'file' || item.desc.tag === 'file') continue;
+      targets.push({ idx, item });
+    }
+    if (!targets.length) return 0;
+    try {
+      ui.line({ kind: 'ok', text: `asking AI to map ${targets.length} unrecognised field(s)…` });
+      const payloadFields = targets.slice(0, 35).map(({ idx, item }) => ({
+        id: idx,
+        label: item.desc.groupLabel || item.desc.label || item.desc.legend || item.desc.placeholder || item.desc.name || '',
+        type: item.desc.type,
+        tag: item.desc.tag,
+        placeholder: item.desc.placeholder || '',
+        section: item.desc.section || '',
+        required: !!item.desc.required,
+        options: (item.desc.options && item.desc.options.length
+          ? item.desc.options.map((o) => o.label)
+          : (item.desc.radioLabels || []).map((r) => r.label)).filter(Boolean),
+      }));
+      const res = await api('/api/autofill/map_fields', {
+        method: 'POST',
+        body: {
+          url: location.href,
+          title: document.title || '',
+          job_id: storageGet('filldesk_last_job') || '',
+          fields: payloadFields,
+        },
+      });
+      const mappings = (res && res.mappings) || {};
+      let mapped = 0;
+      for (const { idx, item } of targets) {
+        const m = mappings[String(idx)];
+        if (m && m.action === 'fill' && m.value) {
+          item.decision = {
+            action: 'fill',
+            key: 'ai:' + clipLabel(item.desc),
+            value: String(m.value),
+            confidence: m.confidence || 0.8,
+            method: 'ai-mapper',
+            review: 'ai_mapped',
+            reason: '',
+          };
+          mark(item.desc.el, 'review');
+          mapped++;
+        }
+      }
+      if (mapped > 0) {
+        ui.line({ kind: 'ok', text: `AI mapped ${mapped} additional field(s)` });
+      }
+      return mapped;
+    } catch (e) {
+      return 0;
+    }
+  }
+
   async function preview() {
     await ensureSnapshot();
     clearMarks();
@@ -884,6 +1000,7 @@
     state.plan = scanResult;
     const counts = { fill: 0, upload: 0, block: 0, skip: 0 };
     for (const item of scanResult) {
+      if (item.decision.reason === 'hidden') continue;
       counts[item.decision.action] = (counts[item.decision.action] || 0) + 1;
       if (item.decision.action === 'fill' || item.decision.action === 'upload') mark(item.desc.el, item.decision.review ? 'review' : 'planned');
       if (item.decision.action === 'block') mark(item.desc.el, 'blocked');
@@ -947,6 +1064,7 @@
     if (state.running) return;
     await ensureSnapshot();
     if (!state.plan.length || state.plan.some((item) => item.desc && item.desc.el && !item.desc.el.isConnected)) await preview();
+    await aiMapUnmatched(state.plan);
     state.running = true;
     state.cancelled = false;
     state.reached = 0;
@@ -967,6 +1085,7 @@
       ui.progress(i, executionPlan.length);
       const { desc, decision } = item;
       if (decision.action === 'block') { results.blocked++; mark(desc.el, 'blocked'); continue; }
+      if (decision.reason === 'hidden' || (!desc.visible && desc.type !== 'file')) { continue; }
       if (decision.action === 'skip') {
         if (decision.unverified) {
           results.unverified = (results.unverified || 0) + 1;
@@ -979,7 +1098,6 @@
         }
         continue;
       }
-      if (!desc.visible) { results.unmatched++; continue; }
       if (!state.settings.overwrite_filled && desc.currentValue && desc.kind !== 'select' && desc.kind !== 'radio' && desc.kind !== 'checkbox') { continue; }
 
       // Ask-per-field mode: the human decides on each value, one at a time.
@@ -1061,7 +1179,7 @@
                state.cancelled ? { reached: state.reached || 0, total: state.plan.length } : null);
     if (IS_TOP) {
       // Same job in every other frame of this tab (iframe-hosted ATS forms).
-      send({ type: 'broadcast-external', msg: { type: 'run' } });
+      send({ type: 'broadcast-external', msg: { type: 'run', snapshot: state.snapshot } });
     }
     send({ type: 'api', server: state.server, token: state.token, path: '/api/events', method: 'POST', body: {
       event: 'autofill_run', host: location.hostname, filled: results.filled, uploaded: results.uploaded,
@@ -2075,6 +2193,7 @@
             if (IS_TOP && !ui.isMounted()) { ui.mount(); uiCheckServer(); }
             if (IS_TOP) ui.show();
             if (msg.external && IS_TOP) return respond({ ok: true, skipped: 'top frame drives the run' });
+            if (msg.snapshot) { state.snapshot = msg.snapshot; state.plan = []; }
             await run();
             respond({ ok: true, host: location.hostname });
             break;

@@ -659,6 +659,26 @@ def r_autofill_prepare_and_fill(api: Api):
     })
 
 
+@route("POST", "/api/autofill/map_fields")
+def r_autofill_map_fields(api: Api):
+    """Universal LLM fallback: map unrecognised form fields against profile + job."""
+    body = api.json() or {}
+    fields = body.get("fields") or []
+    job_id = str(body.get("job_id") or "").strip()
+    url = str(body.get("url") or "").strip()
+    job = store.get_job(job_id) if job_id else None
+    if not job and url:
+        for j in store.list_jobs():
+            if j.get("url") == url:
+                job = j
+                break
+    if not job:
+        job = {"title": str(body.get("title") or ""), "company": str(body.get("company") or ""), "description": ""}
+    profile = store.load_profile()
+    mappings = packet_mod.map_unrecognised_fields(fields, profile, job)
+    return ok({"mappings": mappings})
+
+
 @route("GET", "/api/autofill/latest")
 def r_autofill_latest(api: Api):
     packets = [p for p in store.list_packets() if p.get("approved")]
