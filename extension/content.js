@@ -146,12 +146,29 @@
   function send(msg) {
     return new Promise((resolve) => {
       try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+          return resolve({ ok: false, error: 'Extension was reloaded — please refresh this tab (F5) and try again.' });
+        }
         chrome.runtime.sendMessage(msg, (res) => {
-          if (chrome.runtime.lastError) return resolve({ ok: false, error: chrome.runtime.lastError.message });
+          if (chrome.runtime.lastError) {
+            const m = chrome.runtime.lastError.message || '';
+            return resolve({
+              ok: false,
+              error: /context invalidated/i.test(m)
+                ? 'Extension was reloaded — please refresh this tab (F5) and try again.'
+                : m,
+            });
+          }
           resolve(res || { ok: false, error: 'no response from FillDesk background' });
         });
       } catch (e) {
-        resolve({ ok: false, error: String(e && e.message) });
+        const m = String((e && e.message) || e);
+        resolve({
+          ok: false,
+          error: /context invalidated/i.test(m)
+            ? 'Extension was reloaded — please refresh this tab (F5) and try again.'
+            : m,
+        });
       }
     });
   }
