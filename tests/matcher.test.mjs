@@ -962,3 +962,29 @@ test('Workday multi-step application fields: Step 2 info and Step 3 experience 2
   assert.equal(rExp2Desc.key, 'exp.description');
   assert.equal(rExp2Desc.value, '• -40% tickets');
 });
+
+test('Workday Address section does not hijack City, State, Postal Code, or Country Phone Code', () => {
+  const snap = {
+    ...SNAP,
+    address: { line1: '3 1/2 S Jefferson Ave', city: 'Iola', state: 'KS', postal_code: '66749', country: 'United States' },
+  };
+  const rLine1 = M.classify(f({ label: 'Address Line 1 *', id: 'address--addressLine1', section: 'Address' }), snap, {});
+  assert.equal(rLine1.key, 'address.line1');
+  assert.equal(rLine1.value, '3 1/2 S Jefferson Ave');
+
+  const rCity = M.classify(f({ label: 'City *', id: 'address--city', section: 'Address' }), snap, {});
+  assert.equal(rCity.key, 'address.city');
+  assert.equal(rCity.value, 'Iola');
+
+  const rState = M.classify(f({ label: 'State *', id: 'address--countryRegion', section: 'Address', type: 'select', tag: 'select', isCustomCombobox: true }), snap, {});
+  assert.equal(rState.key, 'address.state');
+  assert.equal(rState.value, 'KS');
+
+  const rPostal = M.classify(f({ label: 'Postal Code *', id: 'address--postalCode', section: 'Address' }), snap, {});
+  assert.equal(rPostal.key, 'address.postal');
+  assert.equal(rPostal.value, '66749');
+
+  const rPhoneCode = M.classify(f({ label: 'Country Phone Code *', id: 'phoneNumber--countryPhoneCode', section: 'Phone', type: 'select', tag: 'select', isCustomCombobox: true }), snap, {});
+  assert.equal(rPhoneCode.key, 'identity.phone_country_code');
+  assert.equal(rPhoneCode.value, 'United States');
+});

@@ -771,30 +771,46 @@
     if (el.focus) el.focus({ preventScroll: true });
     const isComboboxExpanded = el.getAttribute('aria-expanded') === 'true' || el.checked;
     if (!isComboboxExpanded) el.click();
-    await sleep(200);
 
     const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
-    let container = controls ? document.getElementById(controls) : null;
-    if (!container) {
-      container = el.closest('[class*="select"], [class*="Select"], [class*="dropdown"]') || document.body;
+    const optionSelector = '[role="option"], [role="menuitem"], [data-automation-id="menuItem"], [data-testid*="option"], [class*="option-item"], [class*="SelectOption"], li[data-value], li[role="option"]';
+    const listboxSelector = '[role="listbox"], [role="menu"], [data-automation-id="select-menu"], [data-automation-id="promptList"], [class*="SelectMenu"], [class*="popover"]';
+
+    const findOptions = () => {
+      let container = controls ? document.getElementById(controls) : null;
+      if (container && isVisible(container)) {
+        const list = queryAllDeep(optionSelector, container).filter(isVisible);
+        if (list.length) return list;
+      }
+      const listboxes = queryAllDeep(listboxSelector).filter(isVisible);
+      for (const lb of listboxes) {
+        let items = queryAllDeep(optionSelector, lb).filter(isVisible);
+        if (!items.length) items = queryAllDeep('li, button, div[tabindex], [data-automation-id="promptOption"]', lb).filter(isVisible);
+        if (items.length) return items;
+      }
+      const localContainer = closestDeep(el, '[class*="select" i], [class*="dropdown" i]');
+      if (localContainer) {
+        const items = queryAllDeep(optionSelector, localContainer).filter(isVisible);
+        if (items.length) return items;
+      }
+      return queryAllDeep(optionSelector).filter((o) => isVisible(o) && !o.hasAttribute('aria-haspopup'));
+    };
+
+    let optionEls = [];
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await sleep(attempt === 0 ? 180 : 120);
+      optionEls = findOptions();
+      if (optionEls.length) break;
     }
-    const optionSelector = '[data-automation-id="menuItem"], [data-automation-id="promptOption"], [data-automation-id*="option" i], [role="option"], [role="menuitem"], [data-testid*="option"], [class*="option-item"], [class*="SelectOption"], li[data-value], li[role="option"]';
-    let optionEls = Array.from(document.querySelectorAll(optionSelector)).filter(isVisible);
-    if (!optionEls.length && container) {
-      optionEls = Array.from(container.querySelectorAll(optionSelector));
-    }
+
     if (!optionEls.length) {
-      const searchBox = document.querySelector('[data-automation-id="searchBox"], [data-automation-id*="search" i], input[type="search"]');
-      if (searchBox && isVisible(searchBox)) {
+      const searchBox = queryAllDeep('[data-automation-id="searchBox"], [data-automation-id*="search" i], input[type="search"]').find(isVisible);
+      if (searchBox) {
         setNativeValue(searchBox, value);
         searchBox.dispatchEvent(new Event('input', { bubbles: true }));
-        await sleep(300);
-        optionEls = Array.from(document.querySelectorAll(optionSelector)).filter(isVisible);
+        await sleep(320);
+        optionEls = findOptions();
       }
-    }
-    if (!optionEls.length) {
-      const listbox = document.querySelector('[role="listbox"], [role="menu"], [class*="SelectMenu"], [class*="popover"]');
-      if (listbox) optionEls = Array.from(listbox.querySelectorAll('li, button, div[tabindex]')).filter(isVisible);
     }
     if (!optionEls.length) return false;
 

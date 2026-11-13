@@ -75,14 +75,15 @@
     { key: 'identity.email', rx: /e-?mail|email address/, autocomplete: ['email'] },
     { key: 'identity.phone_device_type', rx: /phone\s*(device\s*)?type|device\s*type/i },
     { key: 'identity.phone_extension', rx: /\b(?:phone\s*)?ext(?:ension)?\b/i },
+    { key: 'identity.phone_country_code', rx: /(?:country|intl|international)\s*(?:phone\s*)?(?:code|dial\s*code)|phone\s*country\s*code/i },
     { key: 'identity.phone', rx: /phone|mobile|telephone|cell(ular)? (number|phone)|contact number/, autocomplete: ['tel'] },
     { key: 'identity.location', rx: /\b(location\b|current location|where (are|do) you( currently)? (based|located|living|from)|based in|home ?town|hometown|city and state)\b/ },
     { key: 'address.line2', rx: /(?:address\s*(?:line\s*)?2|apartment|suite|\bunit\s*(?:number|#)?\b|\bapt\b)/i, autocomplete: ['address-line2'] },
-    { key: 'address.line1', rx: /(?:address\s*(?:line\s*)?1|street\s*address|mailing\s*address|(?:^|\b)(?:home\s*)?address(?!\s*(?:line\s*)?2)\b)/i, autocomplete: ['address-line1'] },
     { key: 'address.city', rx: /\bcity\b|town|suburb/, autocomplete: ['address-level2'] },
     { key: 'address.state', rx: /\bstate\b|province|region|county/, autocomplete: ['address-level1'] },
     { key: 'address.postal', rx: /zip|postal|post ?code/, autocomplete: ['postal-code'] },
     { key: 'address.country', rx: /\bcountry\b|nation/, autocomplete: ['country-name', 'country'] },
+    { key: 'address.line1', rx: /(?:address\s*(?:line\s*)?1|street\s*address|mailing\s*address|(?:^|\b)(?:home\s*)?address(?!\s*(?:line\s*)?2)\b)/i, autocomplete: ['address-line1'] },
     { key: 'identity.timezone', rx: /time ?zone/ },
     { key: 'links.linkedin', types: ['text', 'url', 'textarea'], rx: /linked ?in/ },
     { key: 'links.github', types: ['text', 'url', 'textarea'], rx: /github/ },
@@ -1138,6 +1139,10 @@
         out.context = 'identity.phone_device_type';
       } else if (chosen.key === 'identity.phone_extension') {
         value = (snap.identity && snap.identity.phone_extension) || '';
+      } else if (chosen.key === 'identity.phone_country_code') {
+        const isSelect = field.tag === 'select' || field.isCustomCombobox;
+        value = isSelect ? ((snap.address && snap.address.country) || 'United States') : '+1';
+        out.context = 'identity.phone_country_code';
       } else if (chosen.key === 'identity.suffix') {
         value = (snap.identity && snap.identity.suffix) || '';
         if (!value && field.options && field.options.some((o) => /^(none|n\/?a|not applicable)$/i.test(o.label || o.value))) {
