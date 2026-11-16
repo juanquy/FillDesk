@@ -978,64 +978,178 @@
   // ---------------------------------------------------------------- actions
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  async function aiMapUnmatched(plan) {
+  async function optionalScreenshot() {
+    if (!IS_TOP) return null;
+    try {
+      const cap = await send({ type: 'capture-tab' });
+      if (cap && cap.ok && cap.dataUrl) return cap.dataUrl;
+    } catch (e) { /* vision capture optional */ }
+    return null;
+  }
+
+  function serializeFieldForAI(idx, item, extra = {}) {
+    const d = item.desc;
+    return {
+      id: idx,
+      label: d.groupLabel || d.label || d.legend || d.placeholder || d.name || '',
+      type: d.type,
+      tag: d.tag,
+      placeholder: d.placeholder || '',
+      section: d.section || '',
+      required: !!d.required,
+      options: (d.options && d.options.length
+        ? d.options.map((o) => o.label)
+        : (d.radioLabels || []).map((r) => r.label)).filter(Boolean),
+      ...extra,
+    };
+  }
+
+  function fieldValidationError(el) {
+    if (!el) return '';
+    if (el.validationMessage) return clean(el.validationMessage).slice(0, 120);
+    const invalid = el.getAttribute && el.getAttribute('aria-invalid') === 'true';
+    const box = closestDeep(el, '.field, .form-field, [class*="field-entry"], [class*="form-group"], [data-automation-id*="formField" i], fieldset, div');
+    if (box) {
+      const errEl = box.querySelector('[class*="error" i], [class*="invalid" i], [role="alert"], [data-automation-id*="error" i]');
+      if (errEl && isVisible(errEl)) {
+        const msg = clean(errEl.textContent || '');
+        if (msg) return msg.slice(0, 120);
+      }
+    }
+    return invalid ? 'marked invalid' : '';
+  }
+
+  async function applyFieldValue(desc, value, context) {
+    if (desc.kind === 'select') return await fillSelect(desc, value, context);
+    if (desc.kind === 'radio') return fillRadio(desc, value, context);
+    if (desc.kind === 'checkbox') return fillCheckbox(desc, value);
+    if (desc.kind === 'editable') {
+      desc.el.focus();
+      document.execCommand('insertText', false, value);
+      return (desc.el.textContent || '').includes(value.slice(0, 24));
+    }
+    return await fillText(desc, value);
+  }
+
+  async function aiAnalyzePage(plan) {
     if (!state.token || !Array.isArray(plan) || !plan.length) return 0;
     const targets = [];
     for (let idx = 0; idx < plan.length; idx++) {
       const item = plan[idx];
       if (!item || !item.desc || !item.decision) continue;
-      if (item.decision.action !== 'skip') continue;
       if (!item.desc.visible || item.decision.reason === 'hidden') continue;
+      if (item.decision.action === 'block' || item.decision.action === 'upload') continue;
       if (item.decision.unverified || item.decision.reason === 'ats autofill widget') continue;
       if (item.desc.type === 'file' || item.desc.tag === 'file') continue;
+      if (item.decision.method === 'autocomplete' || item.decision.method === 'work_authorization' || item.decision.method === 'eeoc') continue;
       targets.push({ idx, item });
     }
     if (!targets.length) return 0;
     try {
-      ui.line({ kind: 'ok', text: `asking AI to map ${targets.length} unrecognised field(s)…` });
-      const payloadFields = targets.slice(0, 35).map(({ idx, item }) => ({
-        id: idx,
-        label: item.desc.groupLabel || item.desc.label || item.desc.legend || item.desc.placeholder || item.desc.name || '',
-        type: item.desc.type,
-        tag: item.desc.tag,
-        placeholder: item.desc.placeholder || '',
-        section: item.desc.section || '',
-        required: !!item.desc.required,
-        options: (item.desc.options && item.desc.options.length
-          ? item.desc.options.map((o) => o.label)
-          : (item.desc.radioLabels || []).map((r) => r.label)).filter(Boolean),
-      }));
-      const res = await api('/api/autofill/map_fields', {
+      ui.line({ kind: 'ok', text: `AI analyzing ${targets.length} field(s) on this page…` });
+      const screenshot = await optionalScreenshot();
+      const payloadFields = targets.slice(0, 40).map(({ idx, item }) =>
+        serializeFieldForAI(idx, item, {
+          rule_guess: item.decision.action === 'fill' ? `${item.decision.key} => ${clip(item.decision.value, 60)}` : '',
+        })
+      );
+      const res = await api('/api/autofill/analyze_page', {
         method: 'POST',
         body: {
           url: location.href,
           title: document.title || '',
           job_id: storageGet('filldesk_last_job') || '',
+          screenshot,
           fields: payloadFields,
         },
       });
       const mappings = (res && res.mappings) || {};
-      let mapped = 0;
+      let updated = 0;
       for (const { idx, item } of targets) {
         const m = mappings[String(idx)];
-        if (m && m.action === 'fill' && m.value) {
+        if (!m) continue;
+        if (m.action === 'skip') {
+          item.decision = {
+            action: 'skip',
+            key: item.decision.key,
+            value: '',
+            confidence: m.confidence || 0.9,
+            reason: 'skipped by AI analyzer',
+          };
+          mark(item.desc.el, 'manual');
+          updated++;
+        } else if (m.action === 'fill' && m.value) {
+          const wasSkip = item.decision.action !== 'fill';
           item.decision = {
             action: 'fill',
             key: 'ai:' + clipLabel(item.desc),
             value: String(m.value),
-            confidence: m.confidence || 0.8,
-            method: 'ai-mapper',
-            review: 'ai_mapped',
+            confidence: m.confidence || 0.85,
+            method: 'ai-analyzer',
+            review: wasSkip ? 'ai_mapped' : (item.decision.review || null),
             reason: '',
           };
-          mark(item.desc.el, 'review');
-          mapped++;
+          mark(item.desc.el, item.decision.review ? 'review' : 'planned');
+          updated++;
         }
       }
-      if (mapped > 0) {
-        ui.line({ kind: 'ok', text: `AI mapped ${mapped} additional field(s)` });
+      if (updated > 0) {
+        ui.line({ kind: 'ok', text: `AI analyzer verified/updated ${updated} field(s)` });
       }
-      return mapped;
+      return updated;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  async function aiVerifyAndCorrect(items, results) {
+    if (!state.token || !Array.isArray(items) || !items.length || state.cancelled) return 0;
+    const attention = [];
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx];
+      if (!item || !item.desc || !item.decision || !item.desc.visible) continue;
+      if (item.decision.action === 'block' || item.decision.action === 'upload' || item.decision.unverified) continue;
+      if (item.desc.type === 'file' || item.desc.tag === 'file' || item.desc.type === 'password') continue;
+      if (item.desc.el && !item.desc.el.isConnected) continue;
+      const errText = fieldValidationError(item.desc.el);
+      const curVal = liveFieldValue(item.desc);
+      const needsFix = Boolean(errText) || ((item.decision.action === 'fill' || item.desc.required) && !curVal);
+      if (needsFix) {
+        attention.push({ idx, item, curVal, errText });
+      }
+    }
+    if (!attention.length) return 0;
+    try {
+      ui.line({ kind: 'ok', text: `verifying ${attention.length} field(s) visually & via DOM…` });
+      const screenshot = await optionalScreenshot();
+      const payloadFields = attention.slice(0, 25).map(({ idx, item, curVal, errText }) =>
+        serializeFieldForAI(idx, item, { current_value: curVal, error_text: errText })
+      );
+      const res = await api('/api/autofill/verify_page', {
+        method: 'POST',
+        body: {
+          url: location.href,
+          title: document.title || '',
+          job_id: storageGet('filldesk_last_job') || '',
+          screenshot,
+          fields: payloadFields,
+        },
+      });
+      const corrections = (res && res.corrections) || {};
+      let fixed = 0;
+      for (const { idx, item } of attention) {
+        const c = corrections[String(idx)];
+        if (!c || !c.value) continue;
+        const ok = await applyFieldValue(item.desc, String(c.value), item.decision.context || item.decision.key);
+        if (ok) {
+          item.decision = { ...item.decision, action: 'fill', value: String(c.value), method: 'ai-verifier' };
+          results.filled++;
+          mark(item.desc.el, 'filled');
+          ui.line({ kind: 'ok', text: `auto-corrected ${clipLabel(item.desc)} → ${clip(c.value, 36)}` });
+          fixed++;
+        }
+      }
+      return fixed;
     } catch (e) {
       return 0;
     }
@@ -1112,7 +1226,7 @@
     if (state.running) return;
     await ensureSnapshot();
     if (!state.plan.length || state.plan.some((item) => item.desc && item.desc.el && !item.desc.el.isConnected)) await preview();
-    await aiMapUnmatched(state.plan);
+    await aiAnalyzePage(state.plan);
     state.running = true;
     state.cancelled = false;
     state.reached = 0;
@@ -1182,12 +1296,7 @@
         }
 
         desc.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        let ok = false;
-        if (desc.kind === 'select') ok = await fillSelect(desc, decision.value, decision.context || decision.key);
-        else if (desc.kind === 'radio') ok = fillRadio(desc, decision.value, decision.context || decision.key);
-        else if (desc.kind === 'checkbox') ok = fillCheckbox(desc, decision.value);
-        else if (desc.kind === 'editable') { desc.el.focus(); document.execCommand('insertText', false, decision.value); ok = (desc.el.textContent || '').includes(decision.value.slice(0, 24)); }
-        else ok = await fillText(desc, decision.value);
+        const ok = await applyFieldValue(desc, decision.value, decision.context || decision.key);
 
         if (ok) {
           results.filled++;
@@ -1220,6 +1329,9 @@
           }
         }
       }
+    }
+    if (!state.cancelled && !state.reviewEach) {
+      await aiVerifyAndCorrect(nonUploads, results);
     }
     state.running = false;
     ui.setRunning(false);
@@ -1377,7 +1489,61 @@
     ui.line({ kind: 'warn', text: 'stopped by you — nothing was submitted' });
   }
 
+  function liveFieldValue(desc) {
+    if (!desc || !desc.el) return '';
+    const el = desc.el;
+    if (desc.kind === 'select') {
+      if (el.tagName === 'SELECT') {
+        const opt = el.options && el.options[el.selectedIndex];
+        const t = opt ? clean(opt.textContent || opt.value) : '';
+        return /^(select|choose|--)/i.test(t) ? '' : t;
+      }
+      const txt = clean(el.textContent || el.value || '');
+      return /^(select|choose|please select|--)/i.test(txt) ? '' : txt;
+    }
+    if (desc.kind === 'radio') {
+      for (const r of (desc.radioLabels || [])) {
+        if (r.el && (r.el.checked || r.el.getAttribute('aria-pressed') === 'true')) return clean(r.label);
+      }
+      return '';
+    }
+    if (desc.kind === 'checkbox') {
+      return el.checked ? 'Yes' : '';
+    }
+    if (desc.kind === 'editable') return clean(el.textContent || '');
+    return clean(el.value || '');
+  }
+
+  async function captureManualAnswers() {
+    if (!state.token || !Array.isArray(state.plan) || !state.plan.length) return;
+    const entries = [];
+    for (const item of state.plan) {
+      const { desc, decision } = item || {};
+      if (!desc || !desc.el || !desc.el.isConnected) continue;
+      if (desc.type === 'password' || desc.type === 'file' || desc.tag === 'file') continue;
+      if (!desc.visible || (decision && decision.action === 'block')) continue;
+      const val = liveFieldValue(desc);
+      if (!val) continue;
+      const label = clean(desc.groupLabel || desc.label || desc.legend || '');
+      if (!label || label.length < 4) continue;
+      const wasSkipped = !decision || decision.action === 'skip';
+      const wasEdited = decision && decision.action === 'fill' && clean(decision.value) !== val;
+      if (wasSkipped || wasEdited) {
+        entries.push({ label, value: val });
+      }
+    }
+    if (!entries.length) return;
+    const company = (state.snapshot && state.snapshot.job && state.snapshot.job.company) || '';
+    try {
+      const res = await api('/api/autofill/learn_answers', { method: 'POST', body: { entries, company } });
+      if (res && res.learned > 0) {
+        ui.line({ kind: 'ok', text: `learned ${res.learned} new answer(s) into your Answer Bank` });
+      }
+    } catch (e) { /* non-blocking learning pass */ }
+  }
+
   function stepNext() {
+    captureManualAnswers().catch(() => {});
     if (state.settings.click_navigation === false) return ui.line({ kind: 'warn', text: 'navigation clicks are off in Settings' });
     const candidates = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="submit"], input[type="button"]'));
     for (const el of candidates) {
@@ -1457,6 +1623,7 @@
   }
 
   async function saveJob() {
+    captureManualAnswers().catch(() => {});
     const jp = jsonLdJobs()[0] || {};
     const host = location.hostname;
     const title = clean(jp.title || meta(['og:title', 'twitter:title']) || textOf(document.querySelector('h1')) || document.title);
@@ -1564,7 +1731,16 @@
       const res = await api('/api/autofill/prepare_and_fill', { method: 'POST', body: payload });
       state.snapshot = res.snapshot;
       storageSet('filldesk_last_job', res.job_id);
-      ui.setHeader(`${res.company || ''} · ${res.title || ''}`.replace(/^ · /, ''), true);
+      const ats = res.ats || (res.snapshot && res.snapshot.ats) || null;
+      const baseTitle = `${res.company || ''} · ${res.title || ''}`.replace(/^ · /, '');
+      const hasAts = ats && typeof ats.coverage_percent === 'number';
+      ui.setHeader(hasAts ? `${baseTitle} · ${ats.coverage_percent}% ATS` : baseTitle, true);
+      if (hasAts) {
+        const topMatched = (ats.matched || []).slice(0, 5).map((m) => m.term).join(', ');
+        const topMissing = (ats.missing_frequent || []).slice(0, 4).map((m) => m.term).join(', ');
+        const detail = [topMatched ? `matched: ${topMatched}` : '', topMissing ? `missing: ${topMissing}` : ''].filter(Boolean).join(' · ');
+        ui.line({ kind: 'ok', text: `ATS keyword coverage: ${ats.coverage_percent}%${detail ? ' (' + detail + ')' : ''}` });
+      }
       ui.line({ kind: 'ok', text: '3/3 tailored packet ready — filling application…' });
       await run();
     } catch (e) {
@@ -2141,6 +2317,7 @@
 
   function handleNavigation() {
     if (!IS_TOP) return;
+    captureManualAnswers().catch(() => {});
     const isApp = looksLikeApplication();
     if (isApp) {
       if (isDismissed()) return;

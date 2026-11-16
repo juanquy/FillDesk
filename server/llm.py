@@ -216,7 +216,7 @@ def _extract_json(text: str) -> Any:
     raise LLMError("model did not return parseable JSON")
 
 
-def _openai_chat(cfg: dict, system: str, user: str, expect_json: bool) -> str:
+def _openai_chat(cfg: dict, system: str, user: str, expect_json: bool, image_data_url: str | None = None) -> str:
     """POST to an OpenAI-compatible endpoint, degrading gracefully.
 
     Gateways disagree about which optional fields they accept: some 400 on
@@ -224,10 +224,15 @@ def _openai_chat(cfg: dict, system: str, user: str, expect_json: bool) -> str:
     explicit "think less" flag or spend the entire output budget thinking and return
     an empty answer. A red 400 in the dashboard is otherwise a mystery to the user.
     """
+    user_content: Any = (
+        [{"type": "text", "text": user}, {"type": "image_url", "image_url": {"url": image_data_url}}]
+        if image_data_url
+        else user
+    )
     base = {
         "model": cfg["model"],
         "max_tokens": cfg["max_tokens"],
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_content}],
         "temperature": cfg["temperature"],
     }
     if expect_json:
@@ -244,6 +249,9 @@ def _openai_chat(cfg: dict, system: str, user: str, expect_json: bool) -> str:
                          "chat_template_kwargs": {"enable_thinking": False}})
     variants += [base, no_format, {k: v for k, v in no_format.items() if k != "temperature"},
                  {**no_format, "enable_thinking": False}]
+    if image_data_url:
+        # Fallback without image in case the model/gateway rejects multimodal content
+        variants.append({**no_format, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]})
 
     last: LLMError | None = None
     i = 0
@@ -286,14 +294,14 @@ def _openai_chat(cfg: dict, system: str, user: str, expect_json: bool) -> str:
     raise last or LLMError(f"no usable response from {cfg['base_url']}")
 
 
-def complete(system: str, user: str, expect_json: bool = True, settings: dict | None = None) -> Any:
+def complete(system: str, user: str, expect_json: bool = True, settings: dict | None = None, image_data_url: str | None = None) -> Any:
     cfg = resolve(settings)
     provider = cfg["provider"]
     if provider == "none":
         raise LLMError("no LLM configured")
 
     if provider in ("openai",):
-        text = _openai_chat(cfg, system, user, expect_json)
+        text = _openai_chat(cfg, system, user, expect_json, image_data_url=image_data_url)
     elif provider == "anthropic":
         data = _post(
             cfg["base_url"] + "/v1/messages",

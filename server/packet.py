@@ -50,7 +50,7 @@ def profile_plain_text(profile: dict) -> str:
     return sensitive.normalize(" \n ".join(p for p in parts if p))
 
 
-def profile_brief(profile: dict, limit: int = 9000) -> str:
+def profile_brief(profile: dict, limit: int = 32000) -> str:
     """Compact, token-cheap profile digest for the model."""
     lines: list[str] = []
     a = lines.append
@@ -118,7 +118,7 @@ def profile_brief(profile: dict, limit: int = 9000) -> str:
         for b in has_boiler:
             a(f"  Q: {b.get('label')}\n  A: {b['text']}")
     if profile.get("master_resume_markdown"):
-        a("\nMASTER RESUME (markdown):\n" + profile["master_resume_markdown"][:4500])
+        a("\nMASTER RESUME (markdown):\n" + profile["master_resume_markdown"][:20000])
     return "\n".join(lines)[:limit]
 
 
@@ -210,7 +210,7 @@ def extract_questions(job: dict, extra: list[str] | None = None) -> list[str]:
     return found[:40]
 
 
-def job_brief(job: dict, limit: int = 7000) -> str:
+def job_brief(job: dict, limit: int = 32000) -> str:
     return "\n".join(
         [
             f"TITLE: {job.get('title') or UNKNOWN}",
@@ -1082,6 +1082,10 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
     comp_raw = (packet.get("company") or (job.get("company") if job else "") or "").strip()
     comp_slug = store.slug(comp_raw) if comp_raw else ""
     cand_slug = store.slug(profile.get("name") or "resume")
+    resume_md = (packet.get("resume") or {}).get("markdown", "")
+    ats_obj = (packet.get("resume") or {}).get("ats")
+    if not ats_obj and (job or {}).get("description"):
+        ats_obj = resume_export.ats_report(resume_md, (job or {}).get("description", ""))
 
     return {
         "version": SNAPSHOT_VERSION,
@@ -1127,7 +1131,8 @@ def build_autofill_snapshot(packet: dict, profile: dict, job: dict) -> dict:
             "how_heard": profile.get("how_heard") or "LinkedIn",
         },
         "links": links,
-        "resume_markdown": packet.get("resume", {}).get("markdown", ""),
+        "resume_markdown": resume_md,
+        "ats": ats_obj or {},
         "cover_letter": packet.get("cover_letter", {}).get("text", "") or cover_letter_with_rules(profile, job, []),
         "skills": profile.get("skills", []),
         "languages": profile.get("languages", []),
@@ -1209,22 +1214,32 @@ Strict rules:
 {"mappings": [{"id": 0, "action": "fill", "value": "...", "confidence": 0.9}, {"id": 1, "action": "skip"}]}"""
 
 
-def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None = None) -> dict[str, dict]:
-    """Use the configured LLM to map unrecognised form fields against the candidate profile."""
-    if not fields:
-        return {}
-    if not llm.status().get("usable"):
-        return {}
+ANALYZE_PAGE_SYSTEM = """You are FillDesk's intelligent full-page job application analyzer.
+Given a candidate's verified Master Profile, the job posting, all visible form fields on the current page (with their types, placeholders, dropdown/radio options, and sections), and optionally a screenshot of the page:
+Analyze the ENTIRE form holistically and return the exact value to fill for each field ID, or "skip".
 
+Strict rules:
+1. NEVER invent credentials, salaries/wages, dates, employers, phone numbers, or legal attestations not supported by the profile.
+2. NEVER answer protected-class (race, gender, veteran, disability), criminal background, age/DOB, SSN, or legal signature/attestation fields — return "skip".
+3. Group numbered/prefixed blocks consistently (e.g. ALL "Employer 1: ..." fields belong to experience[0], ALL "Employer 2: ..." fields belong to experience[1]). Never mix different employers in the same block.
+4. For optional fields with no profile data or explicit "leave blank" notes (e.g. Middle Name, Alternate Phone, Wage, Reason for Leaving when absent, SMS consent, AI opt-out), return "skip".
+5. Format dates to match the field: "YYYY-MM-DD" for type="date", "YYYY-MM" for type="month", or matching the placeholder. If a year-only date (e.g. "2023") is used on a type="date" field, use "2023-01-01" only when appropriate, or skip if end year is current/Present.
+6. If a field has `options`, `value` MUST match one of the provided option strings.
+7. For open-ended screening questions, write a concise, honest, tailored answer grounded strictly in the candidate's profile and the job posting.
+8. Return ONLY valid JSON:
+{"mappings": [{"id": 0, "action": "fill", "value": "...", "confidence": 0.95}, {"id": 1, "action": "skip"}]}"""
+
+
+def _build_llm_field_context(fields: list[dict], profile: dict, job: dict | None = None) -> tuple[list[dict], dict, dict]:
     safe_fields = []
-    for f in fields[:35]:
+    for f in fields[:40]:
         label = str(f.get("label") or "").strip()
         section = str(f.get("section") or "").strip()
         if not label:
             continue
         if sensitive.blocked_reason(f"{label} {section}"):
             continue
-        safe_fields.append({
+        item = {
             "id": f.get("id"),
             "label": label[:240],
             "type": f.get("type") or "text",
@@ -1233,9 +1248,14 @@ def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None 
             "section": section[:120],
             "required": bool(f.get("required")),
             "options": [str(o)[:100] for o in (f.get("options") or [])[:40]],
-        })
-    if not safe_fields:
-        return {}
+        }
+        if f.get("rule_guess"):
+            item["rule_guess"] = str(f.get("rule_guess"))[:120]
+        if "current_value" in f:
+            item["current_value"] = str(f.get("current_value") or "")[:200]
+        if f.get("error_text"):
+            item["error_text"] = str(f.get("error_text"))[:160]
+        safe_fields.append(item)
 
     addr = profile.get("address") if isinstance(profile.get("address"), dict) else {}
     profile_summary = {
@@ -1261,17 +1281,35 @@ def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None 
                 "start": e.get("start", ""),
                 "end": e.get("end", ""),
                 "bullets": (e.get("bullets") or [])[:4],
+                "company_phone": e.get("company_phone", ""),
             }
             for e in (profile.get("experience") or [])[:6]
             if isinstance(e, dict)
         ],
         "education": profile.get("education") or [],
+        "references": profile.get("references") or [],
     }
     job_summary = {
         "title": (job or {}).get("title", ""),
         "company": (job or {}).get("company", ""),
-        "description": str((job or {}).get("description") or "")[:2500],
+        "description": str((job or {}).get("description") or "")[:20000],
     }
+    return safe_fields, profile_summary, job_summary
+
+
+def analyze_page_fields(
+    fields: list[dict],
+    profile: dict,
+    job: dict | None = None,
+    image_data_url: str | None = None,
+    include_skips: bool = True,
+) -> dict[str, dict]:
+    """Use the configured LLM (with optional page screenshot) to analyze all visible fields together."""
+    if not fields or not llm.status().get("usable"):
+        return {}
+    safe_fields, profile_summary, job_summary = _build_llm_field_context(fields, profile, job)
+    if not safe_fields:
+        return {}
 
     user_prompt = json.dumps({
         "profile": profile_summary,
@@ -1280,7 +1318,12 @@ def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None 
     }, ensure_ascii=False)
 
     try:
-        resp = llm.complete(MAP_FIELDS_SYSTEM, user_prompt, expect_json=True)
+        resp = llm.complete(
+            ANALYZE_PAGE_SYSTEM if include_skips else MAP_FIELDS_SYSTEM,
+            user_prompt,
+            expect_json=True,
+            image_data_url=image_data_url,
+        )
     except Exception:  # noqa: BLE001
         return {}
 
@@ -1294,7 +1337,14 @@ def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None 
         if not isinstance(item, dict):
             continue
         fid = item.get("id")
-        if fid not in allowed_ids or item.get("action") != "fill":
+        if fid not in allowed_ids:
+            continue
+        act = item.get("action")
+        if act == "skip":
+            if include_skips:
+                out[str(fid)] = {"action": "skip", "value": "", "confidence": float(item.get("confidence") or 0.9)}
+            continue
+        if act != "fill":
             continue
         val = str(item.get("value") or "").strip()
         if not val or NEEDS_INPUT_MARK in val.lower():
@@ -1302,6 +1352,186 @@ def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None 
         out[str(fid)] = {
             "action": "fill",
             "value": val,
-            "confidence": float(item.get("confidence") or 0.8),
+            "confidence": float(item.get("confidence") or 0.85),
+        }
+    return out
+
+
+def map_unrecognised_fields(fields: list[dict], profile: dict, job: dict | None = None) -> dict[str, dict]:
+    """Use the configured LLM to map unrecognised form fields against the candidate profile."""
+    return analyze_page_fields(fields, profile, job=job, include_skips=False)
+
+
+LEARN_ANSWERS_SYSTEM = """You normalize manually entered job application answers into a candidate's reusable Answer Bank.
+Given Q&A pairs typed by the candidate on a form:
+1. Ignore personal identity/contact/address/link fields or protected-class/compliance/legal attestations.
+2. Clean each remaining question label into a concise, reusable prompt (preserving intent).
+3. Keep the candidate's answer faithful in facts — do not invent new details.
+4. Set `employer_specific` to true ONLY if the answer refers specifically to applying to this company (e.g. "Why Acme?").
+Return ONLY valid JSON:
+{"learned": [{"label": string, "text": string, "employer_specific": boolean}]}"""
+
+_STANDARD_CONTACT_RX = re.compile(
+    r"^(?:first\s*name|last\s*name|full\s*name|middle\s*name|email(?:\s*address)?|phone(?:\s*number)?|mobile|"
+    r"(?:street\s*)?address(?:\s*line\s*[12])?|city|state|zip(?:\s*code)?|postal(?:\s*code)?|country|"
+    r"linked\s*in|github|portfolio|website|url)\b",
+    re.IGNORECASE,
+)
+
+
+def learn_user_answers(entries: list[dict], profile: dict, company: str = "") -> dict[str, Any]:
+    """Capture user-entered/edited form answers into reusable profile boilerplate & facts."""
+    if not isinstance(entries, list):
+        return {"learned": 0, "items": []}
+
+    clean_entries: list[dict[str, str]] = []
+    for raw in entries[:30]:
+        if not isinstance(raw, dict):
+            continue
+        label = re.sub(r"\s+", " ", str(raw.get("label") or "").strip()).rstrip("* ").strip()
+        val = str(raw.get("value") or "").strip()
+        if not label or not val or len(val) < 1 or len(val) > 1500:
+            continue
+        if NEEDS_INPUT_MARK in val.lower():
+            continue
+        if sensitive.blocked_reason(label):
+            continue
+        if _STANDARD_CONTACT_RX.match(label.lower()):
+            continue
+        clean_entries.append({"label": label[:240], "value": val[:1000]})
+
+    if not clean_entries:
+        return {"learned": 0, "items": []}
+
+    candidates: list[dict[str, Any]] = []
+    if llm.status().get("usable"):
+        try:
+            resp = llm.complete(
+                LEARN_ANSWERS_SYSTEM,
+                json.dumps({"company": company, "entries": clean_entries}, ensure_ascii=False),
+                expect_json=True,
+            )
+            raw_list = resp.get("learned") if isinstance(resp, dict) else []
+            if isinstance(raw_list, list):
+                for item in raw_list:
+                    if not isinstance(item, dict):
+                        continue
+                    lbl = str(item.get("label") or "").strip()
+                    txt = str(item.get("text") or "").strip()
+                    if not lbl or not txt or sensitive.blocked_reason(lbl):
+                        continue
+                    emp_spec = bool(item.get("employer_specific")) or config.employer_specific(lbl)
+                    candidates.append({"label": lbl[:120], "text": txt[:1000], "employer_specific": emp_spec})
+        except Exception:  # noqa: BLE001
+            candidates = []
+
+    if not candidates:
+        for e in clean_entries:
+            lbl = e["label"]
+            if len(lbl) < 6:
+                continue
+            candidates.append({
+                "label": lbl[:120],
+                "text": e["value"][:1000],
+                "employer_specific": config.employer_specific(lbl),
+            })
+
+    if not candidates:
+        return {"learned": 0, "items": []}
+
+    boilerplate = list(profile.get("boilerplate") or [])
+    learned_items: list[dict[str, str]] = []
+    comp_clean = company.strip()
+
+    for c in candidates:
+        lbl = c["label"]
+        txt = c["text"]
+        if sensitive.blocked_reason(lbl) or NEEDS_INPUT_MARK in txt.lower():
+            continue
+        if c.get("employer_specific") and comp_clean and not config.scoped_company(lbl):
+            lbl = f"{lbl} \u2014 {comp_clean}"
+
+        lower_lbl = lbl.lower()
+        if not profile.get("salary_expectation") and re.search(r"\b(salary|compensation|wage|desired pay)\b", lower_lbl):
+            profile["salary_expectation"] = txt
+        elif not profile.get("notice_period") and re.search(r"\b(notice period|how much notice|when can you start|earliest start)\b", lower_lbl):
+            profile["notice_period"] = txt
+        elif not profile.get("relocation") and re.search(r"\b(relocat\w*|willing to move)\b", lower_lbl):
+            profile["relocation"] = txt
+
+        existing = next((b for b in boilerplate if isinstance(b, dict) and str(b.get("label") or "").strip().lower() == lower_lbl), None)
+        if existing:
+            existing["text"] = txt
+            learned_items.append({"id": existing.get("id", ""), "label": lbl, "text": txt})
+        else:
+            entry_obj = {"id": store.new_id("ans"), "label": lbl, "text": txt}
+            boilerplate.append(entry_obj)
+            learned_items.append(entry_obj)
+
+    profile["boilerplate"] = boilerplate
+    store.save_profile(profile)
+    return {"learned": len(learned_items), "items": learned_items}
+
+
+VERIFY_PAGE_SYSTEM = """You are FillDesk's post-fill visual and DOM verification agent.
+Given the candidate's Master Profile, the job posting, fields that still look empty, left on a placeholder, or show a validation error (`error_text`), and optionally a screenshot of the filled page:
+Identify only the fields that need a fix and return the exact corrected value grounded strictly in the profile.
+
+Rules:
+1. NEVER invent employers, dates, salaries/wages, phone numbers, or protected-class/legal attestations.
+2. Check phone format errors (e.g. strip +1 / formatting), date format errors (`YYYY-MM-DD`, `MM/YYYY`, `YYYY`), or dropdowns still showing "Select One" / "Choose...".
+3. If a field has `options`, `value` MUST match one of the provided option strings.
+4. Only return corrections when confident the profile supports them. Never output "[NEEDS INPUT]".
+5. Return ONLY valid JSON:
+{"corrections": [{"id": 0, "value": "...", "reason": "short explanation"}]}"""
+
+
+def verify_filled_page(
+    fields: list[dict],
+    profile: dict,
+    job: dict | None = None,
+    image_data_url: str | None = None,
+) -> dict[str, dict]:
+    """Inspect post-fill empty/error fields (with optional screenshot) and propose grounded corrections."""
+    if not fields or not llm.status().get("usable"):
+        return {}
+    safe_fields, profile_summary, job_summary = _build_llm_field_context(fields[:25], profile, job)
+    if not safe_fields:
+        return {}
+
+    user_prompt = json.dumps({
+        "profile": profile_summary,
+        "job": job_summary,
+        "fields_needing_attention": safe_fields,
+    }, ensure_ascii=False)
+
+    try:
+        resp = llm.complete(
+            VERIFY_PAGE_SYSTEM,
+            user_prompt,
+            expect_json=True,
+            image_data_url=image_data_url,
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+
+    items = resp.get("corrections") if isinstance(resp, dict) else (resp if isinstance(resp, list) else [])
+    if not isinstance(items, list):
+        return {}
+
+    allowed_ids = {f["id"] for f in safe_fields}
+    out: dict[str, dict] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        fid = item.get("id")
+        if fid not in allowed_ids:
+            continue
+        val = str(item.get("value") or "").strip()
+        if not val or NEEDS_INPUT_MARK in val.lower():
+            continue
+        out[str(fid)] = {
+            "value": val,
+            "reason": str(item.get("reason") or "post-fill verification fix")[:120],
         }
     return out

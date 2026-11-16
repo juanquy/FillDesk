@@ -107,6 +107,16 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
         respond({ ok: true });
         break;
       }
+      case 'capture-tab': {
+        try {
+          const winId = sender.tab && sender.tab.windowId;
+          const dataUrl = await chrome.tabs.captureVisibleTab(winId, { format: 'jpeg', quality: 60 });
+          respond({ ok: true, dataUrl });
+        } catch (e) {
+          respond({ ok: false, error: String((e && e.message) || e) });
+        }
+        break;
+      }
       case 'get-config': {
         const cfg = await config();
         respond({ ok: true, ...cfg });

@@ -656,14 +656,11 @@ def r_autofill_prepare_and_fill(api: Api):
         "job_id": job_id,
         "title": job.get("title"),
         "company": job.get("company"),
+        "ats": snap.get("ats") or (refreshed.get("resume") or {}).get("ats") or {},
     })
 
 
-@route("POST", "/api/autofill/map_fields")
-def r_autofill_map_fields(api: Api):
-    """Universal LLM fallback: map unrecognised form fields against profile + job."""
-    body = api.json() or {}
-    fields = body.get("fields") or []
+def _resolve_job_for_autofill(body: dict) -> dict:
     job_id = str(body.get("job_id") or "").strip()
     url = str(body.get("url") or "").strip()
     job = store.get_job(job_id) if job_id else None
@@ -674,9 +671,58 @@ def r_autofill_map_fields(api: Api):
                 break
     if not job:
         job = {"title": str(body.get("title") or ""), "company": str(body.get("company") or ""), "description": ""}
+    return job
+
+
+@route("POST", "/api/autofill/map_fields")
+def r_autofill_map_fields(api: Api):
+    """Universal LLM fallback: map unrecognised form fields against profile + job."""
+    body = api.json() or {}
+    fields = body.get("fields") or []
+    job = _resolve_job_for_autofill(body)
     profile = store.load_profile()
     mappings = packet_mod.map_unrecognised_fields(fields, profile, job)
     return ok({"mappings": mappings})
+
+
+def _extract_screenshot(body: dict) -> str | None:
+    img = body.get("screenshot") or None
+    if img and str(img).startswith("data:image/"):
+        return str(img)
+    return None
+
+
+@route("POST", "/api/autofill/analyze_page")
+def r_autofill_analyze_page(api: Api):
+    """AI-first page analyzer: evaluates all visible form fields (and optional screenshot) together."""
+    body = api.json() or {}
+    fields = body.get("fields") or []
+    job = _resolve_job_for_autofill(body)
+    profile = store.load_profile()
+    mappings = packet_mod.analyze_page_fields(fields, profile, job, image_data_url=_extract_screenshot(body))
+    return ok({"mappings": mappings})
+
+
+@route("POST", "/api/autofill/verify_page")
+def r_autofill_verify_page(api: Api):
+    """Post-fill verification pass: inspect empty/error fields with optional screenshot."""
+    body = api.json() or {}
+    fields = body.get("fields") or []
+    job = _resolve_job_for_autofill(body)
+    profile = store.load_profile()
+    corrections = packet_mod.verify_filled_page(fields, profile, job, image_data_url=_extract_screenshot(body))
+    return ok({"corrections": corrections})
+
+
+@route("POST", "/api/autofill/learn_answers")
+def r_autofill_learn_answers(api: Api):
+    """Capture manually filled/edited answers into reusable profile boilerplate."""
+    body = api.json() or {}
+    entries = body.get("entries") or []
+    company = str(body.get("company") or "").strip()
+    profile = store.load_profile()
+    res = packet_mod.learn_user_answers(entries, profile, company=company)
+    return ok(res)
 
 
 @route("GET", "/api/autofill/latest")

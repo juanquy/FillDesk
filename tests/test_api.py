@@ -1382,6 +1382,110 @@ class GeneratedProseIsScrubbed(unittest.TestCase):
         self.assertEqual(mappings["0"]["value"], "Yes, Vanta and Drata for SOC 2.")
         self.assertNotIn("1", mappings, "blocked compliance question must never be sent to or returned by LLM mapper")
 
+    def test_autofill_analyze_page_with_screenshot_and_skip_override(self):
+        from unittest.mock import patch
+        fields = [
+            {"id": 0, "label": "Employer 1: Name & Location *", "type": "text", "tag": "input", "rule_guess": "exp.company => Northwind Cloud"},
+            {"id": 1, "label": "Employer 1: Wage *", "type": "text", "tag": "input", "rule_guess": "exp.company => Northwind Cloud"},
+            {"id": 2, "label": "Disability status", "type": "select", "tag": "select", "options": ["Yes", "No"]},
+        ]
+        with patch("server.llm.status", return_value={"usable": True, "model": "mock-vision"}), \
+             patch("server.llm.complete", return_value={"mappings": [
+                 {"id": 0, "action": "fill", "value": "Northwind Cloud (northwind.example) - Austin, TX", "confidence": 0.95},
+                 {"id": 1, "action": "skip", "confidence": 0.95},
+                 {"id": 2, "action": "fill", "value": "No", "confidence": 0.9},
+             ]}) as mock_complete:
+            code, data = call("POST", "/api/autofill/analyze_page", {
+                "title": "IT Operations Lead",
+                "company": "ExampleCo",
+                "screenshot": "data:image/jpeg;base64,ZmFrZQ==",
+                "fields": fields,
+            })
+        self.assertEqual(code, 200)
+        mappings = data.get("mappings") or {}
+        self.assertEqual(mappings["0"]["action"], "fill")
+        self.assertIn("Northwind Cloud", mappings["0"]["value"])
+        self.assertEqual(mappings["1"]["action"], "skip")
+        self.assertNotIn("2", mappings, "disability question must remain blocked from AI analyzer")
+        self.assertEqual(mock_complete.call_args.kwargs.get("image_data_url"), "data:image/jpeg;base64,ZmFrZQ==")
+
+    def test_autofill_learn_answers_saves_reusable_boilerplate_and_blocks_sensitive(self):
+        from unittest.mock import patch
+        orig_profile = store.load_profile()
+        try:
+            entries = [
+                {"label": "First Name *", "value": "Alex"},
+                {"label": "What is your race / ethnicity?", "value": "Prefer not to say"},
+                {"label": "How many years of cloud security experience do you have?", "value": "5 years leading Microsoft 365 and Defender security."},
+                {"label": "Why do you want to work for us?", "value": "Your infrastructure mission aligns with my background."},
+            ]
+            with patch("server.llm.status", return_value={"usable": True, "model": "mock-model"}), \
+                 patch("server.llm.complete", return_value={"learned": [
+                     {"label": "Years of cloud security experience", "text": "5 years leading Microsoft 365 and Defender security.", "employer_specific": False},
+                     {"label": "Why this company?", "text": "Your infrastructure mission aligns with my background.", "employer_specific": True},
+                 ]}):
+                code, data = call("POST", "/api/autofill/learn_answers", {"company": "AcmeSec", "entries": entries})
+            self.assertEqual(code, 200)
+            self.assertEqual(data.get("learned"), 2)
+            prof = store.load_profile()
+            labels = [b["label"] for b in prof.get("boilerplate", [])]
+            self.assertIn("Years of cloud security experience", labels)
+            self.assertIn("Why this company? \u2014 AcmeSec", labels)
+            self.assertFalse(any("race" in l.lower() for l in labels))
+            self.assertFalse(any("first name" in l.lower() for l in labels))
+        finally:
+            store.save_profile(orig_profile)
+
+    def test_autofill_verify_page_returns_corrections_and_blocks_sensitive(self):
+        from unittest.mock import patch
+        fields = [
+            {"id": 0, "label": "Phone Number *", "type": "tel", "tag": "input", "current_value": "+15550199999", "error_text": "Enter 10 digits without +1"},
+            {"id": 1, "label": "Veteran status", "type": "select", "tag": "select", "current_value": "", "options": ["Yes", "No"]},
+        ]
+        with patch("server.llm.status", return_value={"usable": True, "model": "mock-vision"}), \
+             patch("server.llm.complete", return_value={"corrections": [
+                 {"id": 0, "value": "5550199999", "reason": "Removed +1 prefix per field error"},
+                 {"id": 1, "value": "No", "reason": "should be blocked"},
+             ]}) as mock_complete:
+            code, data = call("POST", "/api/autofill/verify_page", {
+                "title": "Security Engineer",
+                "company": "Acme",
+                "screenshot": "data:image/jpeg;base64,ZmFrZQ==",
+                "fields": fields,
+            })
+        self.assertEqual(code, 200)
+        corrections = data.get("corrections") or {}
+        self.assertIn("0", corrections)
+        self.assertEqual(corrections["0"]["value"], "5550199999")
+        self.assertNotIn("1", corrections, "blocked compliance question must never be corrected by verifier")
+        self.assertEqual(mock_complete.call_args.kwargs.get("image_data_url"), "data:image/jpeg;base64,ZmFrZQ==")
+
+    def test_prepare_and_fill_returns_ats_match_score_and_full_context(self):
+        long_desc = ("Kubernetes Terraform AWS Python security compliance automation " * 250).strip()
+        long_resume = "# Alex Rivera\n\n## Summary\n" + ("Cloud security engineering experience. " * 200)
+        brief_prof = packet_mod.profile_brief({"name": "Alex Rivera", "master_resume_markdown": long_resume})
+        brief_job = packet_mod.job_brief({"title": "Security Lead", "company": "CloudCo", "description": long_desc})
+        self.assertGreater(len(brief_prof), 6000)
+        self.assertGreater(len(brief_job), 10000)
+
+        code, data = call("POST", "/api/autofill/prepare_and_fill", {
+            "url": "https://example.com/jobs/ats-score-test",
+            "title": "Security Lead",
+            "company": "CloudCo",
+            "description": "Looking for Python, Kubernetes, AWS, Terraform, and security automation experience.",
+            "questions": [],
+        })
+        self.assertEqual(code, 200)
+        ats = data.get("ats") or {}
+        self.assertIn("coverage_percent", ats)
+        self.assertIsInstance(ats["coverage_percent"], int)
+        self.assertIn("matched", ats)
+        self.assertEqual((data.get("snapshot") or {}).get("ats", {}).get("coverage_percent"), ats["coverage_percent"])
+        if data.get("packet_id"):
+            call("DELETE", f"/api/packets/{data['packet_id']}")
+        if data.get("job_id"):
+            call("DELETE", f"/api/jobs/{data['job_id']}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
