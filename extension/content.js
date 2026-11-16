@@ -34,6 +34,10 @@
   const BLOCKED_HOST_PATTERNS = [
     /mail\.google\.com$/i,
     /inbox\.google\.com$/i,
+    /(?:^|\.)google\.com$/i,
+    /bing\.com$/i,
+    /duckduckgo\.com$/i,
+    /search\.yahoo\.com$/i,
     /outlook\.(live|office|office365)\.com$/i,
     /mail\.yahoo\.com$/i,
     /mail\.aol\.com$/i,
@@ -54,6 +58,10 @@
     /tiktok\.com$/i,
     /amazon\.com$/i,
     /ebay\.com$/i,
+    /github\.com$/i,
+    /chatgpt\.com$/i,
+    /claude\.ai$/i,
+    /wikipedia\.org$/i,
   ];
 
   const state = {
@@ -2042,8 +2050,10 @@
     const path = location.pathname.toLowerCase();
     const search = location.search.toLowerCase();
 
-    // 1. Blocked sites: Webmail, general social feeds, shopping, chat
-    if (BLOCKED_HOST_PATTERNS.some((p) => p.test(host))) return false;
+    // 1. Blocked sites: Search engines, webmail, social feeds, shopping, chat, docs
+    // (Allow explicit career subdomains/paths like careers.google.com or google.com/about/careers)
+    const isExplicitCareerSub = /(^|\.)(careers?|jobs?|talent|recruiting|hcm)\./i.test(host) || /^\/(about\/careers|careers|jobs)\b/i.test(path);
+    if (!isExplicitCareerSub && BLOCKED_HOST_PATTERNS.some((p) => p.test(host))) return false;
 
     // 2. LinkedIn: active ONLY on /jobs, /talent, /hiring (never on /feed, /messaging, /in, /mynetwork)
     if (host === 'linkedin.com' || host.endsWith('.linkedin.com')) {
@@ -2079,16 +2089,23 @@
     const title = (document.title || '').toLowerCase();
     if (/(career opportunities|job opportunities|job opening|apply for|application for|job details)\b/i.test(title)) return true;
 
-    // 11. Apply or Save Job action on screen AND at least 2 real input fields
+    const realInputs = () => Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=search]), textarea, select')).filter(isVisible);
+
+    // 11. Apply or Save Job action on screen AND at least 2 real visible form inputs
     const hasJobAction = Array.from(document.querySelectorAll('button, a, input[type=button], input[type=submit]')).some((el) => {
       const t = (el.textContent || el.value || '').trim().toLowerCase();
       return /^(apply|apply now|save job|submit application)$/i.test(t);
     });
-    if (hasJobAction && document.querySelectorAll('input:not([type=hidden]), textarea, select').length >= 2) return true;
+    if (hasJobAction && realInputs().length >= 2) return true;
 
-    // 12. Candidate application form signature (file upload for resume + contact inputs)
-    const hasResumeUpload = !!document.querySelector('input[type=file]');
-    if (hasResumeUpload && document.querySelectorAll('input:not([type=hidden]), textarea, select').length >= 3) return true;
+    // 12. Candidate application form signature (resume/CV file upload + at least 3 real visible form inputs)
+    const fileInputs = Array.from(document.querySelectorAll('input[type=file]'));
+    const hasResumeUpload = fileInputs.some((f) => {
+      const box = f.closest('form, section, fieldset, div');
+      const sig = `${f.name || ''} ${f.id || ''} ${f.getAttribute('aria-label') || ''} ${box ? box.textContent.slice(0, 300) : ''}`;
+      return /\b(resume|résumé|curriculum vitae|cv|cover letter|application)\b/i.test(sig);
+    });
+    if (hasResumeUpload && realInputs().length >= 3) return true;
 
     return false;
   }
