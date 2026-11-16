@@ -694,8 +694,15 @@
     const counters = {};
     const out = [];
     for (const entry of fieldElements()) {
-      const cardIdx = findCardIndex(entry.el);
+      let cardIdx = findCardIndex(entry.el);
       const desc = describe(entry, cardIdx ?? 0);
+      if (cardIdx == null) {
+        const lm = `${desc.label || ''} ${desc.groupLabel || ''}`.match(/\b(?:employer|work\s*experience|employment|job|education|reference)\s*#?\s*(\d+)\b/i);
+        if (lm) {
+          cardIdx = Math.max(0, parseInt(lm[1], 10) - 1);
+          desc.index = cardIdx;
+        }
+      }
       const probe = M.classify(desc, state.snapshot || emptySnap(), state.settings);
       if (probe.key && /^(exp|edu|ref)\./.test(probe.key)) {
         if (cardIdx != null) {

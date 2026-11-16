@@ -988,3 +988,30 @@ test('Workday Address section does not hijack City, State, Postal Code, or Count
   assert.equal(rPhoneCode.key, 'identity.phone_country_code');
   assert.equal(rPhoneCode.value, 'United States');
 });
+
+test('Indeed Employer 1 compound labels map to the right subfields without exp.company hijacking', () => {
+  const snap = JSON.parse(JSON.stringify(SNAP));
+  const rName = M.classify(f({ label: 'Employer 1: Name & Location (most recent employer) *' }), snap, {});
+  assert.equal(rName.key, 'exp.company');
+  assert.equal(rName.value, 'Figma');
+
+  const rStart = M.classify(f({ label: 'Employer 1: Start Date *', type: 'date' }), snap, {});
+  assert.equal(rStart.key, 'exp.start');
+
+  const rEnd = M.classify(f({ label: 'Employer 1: End Date', type: 'date' }), snap, {});
+  assert.equal(rEnd.key, 'exp.end');
+
+  const rTitle = M.classify(f({ label: 'Employer 1: Position Title *' }), snap, {});
+  assert.equal(rTitle.key, 'exp.title');
+  assert.equal(rTitle.value, 'Senior Product Manager');
+
+  const rDesc = M.classify(f({ label: 'Employer 1: Job Responsibilities *', type: 'textarea', tag: 'textarea' }), snap, {});
+  assert.equal(rDesc.key, 'exp.description');
+  assert.equal(rDesc.value, '• +23% conversion');
+
+  const rWage = M.classify(f({ label: 'Employer 1: Wage *' }), snap, {});
+  assert.notEqual(rWage.key, 'exp.company');
+
+  const rWageType = M.classify(f({ label: 'Employer 1: Wage Type *', type: 'radio', kind: 'radio' }), snap, {});
+  assert.notEqual(rWageType.key, 'exp.company');
+});

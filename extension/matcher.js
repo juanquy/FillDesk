@@ -97,7 +97,6 @@
     { key: 'doc.other', types: ['file'], rx: /(transcript|writing sample|portfolio (file|upload)|certification file|additional document|supporting document|attachment)/ },
 
     // -- employment history (indexed; content.js maps "current"/"most recent" to index 0)
-    { key: 'exp.company', rx: /(?:current|most recent|previous|present|last)\s*(?:employer|company|organization|organisation)|employer|company(?:\s*name)?|organization(?:\s*name)?|name of (?:employer|company|organization)/i },
     { key: 'exp.title', rx: /(?:current|most recent|previous|present)\s*(?:job\s*)?(?:title|position|role)|job\s*title|position\s*title|role\s*title|your\s*(?:job\s*)?title|designation|\btitle\b/i },
     { key: 'exp.start_month', rx: /\b(start|from|begin|joined)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(start|from|begin|joined)\b/, requires: 'employment' },
     { key: 'exp.start_year', rx: /\b(start|from|begin|joined)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(start|from|begin|joined)\b/, requires: 'employment' },
@@ -105,9 +104,10 @@
     { key: 'exp.end_month', rx: /\b(end|to|until|through|leaving)\b.*\b(month|mo)\b|\b(month|mo)\b.*\b(end|to|until|through|leaving)\b/, requires: 'employment' },
     { key: 'exp.end_year', rx: /\b(end|to|until|through|leaving)\b.*\b(year|yr)\b|\b(year|yr)\b.*\b(end|to|until|through|leaving)\b/, requires: 'employment' },
     { key: 'exp.end', rx: /\b(end|to|until|through|leaving|left|terminated)\b\s*(date|month|year|mm)?/, requires: 'employment' },
-    { key: 'exp.location', rx: /(?:job|position|role|employer|work|office)?\s*location\b|location of (?:employment|position)/i },
+    { key: 'exp.location', rx: /^(?!.*\b(?:name|company|employer)\b.*(?:&|and)\s*location)(?:(?:job|position|role|employer|work|office)?\s*location\b|location of (?:employment|position))/i },
     { key: 'exp.description', types: ['textarea', 'text'], rx: /(?:role|job|work|position|experience)?\s*description\b|responsibilities|duties|summary of duties/i },
     { key: 'exp.reason_for_leaving', rx: /reason (for|of) (leaving|separation|departure)|why (did you leave|are you leaving)/ },
+    { key: 'exp.company', rx: /(?:(?:current|most recent|previous|present|last)\s*(?:employer|company|organization|organisation)(?!.*(?:wage|salary|pay|type|supervisor|manager|phone|email|contact|hours|schedule|start|end|title|duties|responsibilities|description|reason))|employer\s*(?:\d+\s*:\s*)?(?:name(?:\s*(?:&|and)\s*location)?|company)|company(?:\s*name)?|organization(?:\s*name)?|name of (?:employer|company|organization)|\bemployer\b(?!.*(?:wage|salary|pay|type|supervisor|manager|phone|email|contact|hours|schedule|start|end|title|duties|responsibilities|description|reason)))/i },
 
     // -- education
     { key: 'edu.school', rx: /(school|university|college|institution|institute)\b.*(name)?|name of (school|university|college)|institution name/ },
@@ -600,7 +600,8 @@
   // start date -- a wrong answer that looks completely plausible.
   function employmentContext(field) {
     const hay = norm((field.section || '') + ' ' + (field.legend || '') + ' ' + (field.groupLabel || '') + ' ' + (field.id || '') + ' ' + (field.name || '') + ' ' + (field.testid || ''));
-    return /\b(experience|employment|work history|previous (job|role|position|employer)|professional background|job history|workexperience)\b/i.test(hay);
+    if (/\b(experience|employment|work history|previous (job|role|position|employer)|professional background|job history|workexperience)\b/i.test(hay)) return true;
+    return /\bemployer\s*\d*\s*:|(?:most recent|previous|current|last)\s*employer\b/i.test(field.label || '');
   }
 
   function educationContext(field) {
